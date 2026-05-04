@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -12,9 +12,13 @@ import {
   TrendingUp,
   ChevronRight,
   Filter,
+  RotateCcw,
 } from "lucide-react";
-import { mockPipelines, type Pipeline } from "../data/mockData";
 import { StatusBadge } from "../components/ui/StatusBadge";
+import { useApiQuery } from "../hooks/useApiQuery";
+import { getErrorMessage } from "../lib/api/client";
+import { pipelinesApi } from "../lib/api/services";
+import type { CreatePipelinePayload, Pipeline } from "../types/pipeline";
 
 const stageLabels = ["需求分析", "方案设计", "代码生成", "测试生成", "代码评审", "交付集成"];
 
@@ -28,7 +32,32 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<"template" | "input">("template");
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [requirement, setRequirement] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const handleSubmit = async () => {
+    if (!selectedTemplate || !requirement.trim() || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    setSubmitError(null);
+
+    const payload: CreatePipelinePayload = {
+      requirement: requirement.trim(),
+      template: selectedTemplate,
+    };
+
+    try {
+      const pipeline = await pipelinesApi.create(payload);
+      onClose();
+      navigate(`/pipelines/${pipeline.id}`);
+    } catch (error) {
+      setSubmitError(getErrorMessage(error));
+      setSubmitting(false);
+    }
+  };
 
   return (
     <motion.div
@@ -37,7 +66,7 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(8px)" }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(event) => event.target === event.currentTarget && onClose()}
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -51,7 +80,6 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
           boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
         }}
       >
-        {/* Header */}
         <div
           className="flex items-center justify-between px-6 py-5"
           style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}
@@ -74,21 +102,21 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
         <div className="p-6">
           {step === "template" ? (
             <div className="space-y-3">
-              {templates.map((t) => (
+              {templates.map((template) => (
                 <motion.button
-                  key={t.id}
+                  key={template.id}
                   whileHover={{ x: 2 }}
                   whileTap={{ scale: 0.99 }}
-                  onClick={() => setSelectedTemplate(t.id)}
+                  onClick={() => setSelectedTemplate(template.id)}
                   className="w-full flex items-center gap-4 p-4 rounded-xl transition-all"
                   style={{
                     background:
-                      selectedTemplate === t.id
-                        ? `${t.color}12`
+                      selectedTemplate === template.id
+                        ? `${template.color}12`
                         : "rgba(255,255,255,0.03)",
                     border: `1px solid ${
-                      selectedTemplate === t.id
-                        ? `${t.color}35`
+                      selectedTemplate === template.id
+                        ? `${template.color}35`
                         : "rgba(255,255,255,0.07)"
                     }`,
                     cursor: "pointer",
@@ -97,22 +125,22 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
                 >
                   <div
                     className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ background: `${t.color}18` }}
+                    style={{ background: `${template.color}18` }}
                   >
-                    <t.icon size={16} style={{ color: t.color }} />
+                    <template.icon size={16} style={{ color: template.color }} />
                   </div>
                   <div className="flex-1">
                     <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>
-                      {t.label}
+                      {template.label}
                     </div>
                     <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
-                      {t.desc}
+                      {template.desc}
                     </div>
                   </div>
-                  {selectedTemplate === t.id && (
+                  {selectedTemplate === template.id && (
                     <div
                       className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: t.color }}
+                      style={{ background: template.color }}
                     >
                       <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
                         <path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
@@ -126,13 +154,19 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
             <div className="space-y-4">
               <div>
                 <label
-                  style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.5)", display: "block", marginBottom: 8 }}
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: "rgba(255,255,255,0.5)",
+                    display: "block",
+                    marginBottom: 8,
+                  }}
                 >
                   需求描述
                 </label>
                 <textarea
                   value={requirement}
-                  onChange={(e) => setRequirement(e.target.value)}
+                  onChange={(event) => setRequirement(event.target.value)}
                   placeholder="用自然语言描述你的需求，AI 将自动拆解为多阶段 Pipeline 任务...
 
 例如：实现一个用户收藏功能，允许用户收藏文章，并提供收藏列表页面，支持分页和排序。"
@@ -146,11 +180,11 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
                     outline: "none",
                     lineHeight: 1.6,
                   }}
-                  onFocus={(e) =>
-                    (e.target.style.border = "1px solid rgba(91,114,255,0.4)")
+                  onFocus={(event) =>
+                    (event.target.style.border = "1px solid rgba(91,114,255,0.4)")
                   }
-                  onBlur={(e) =>
-                    (e.target.style.border = "1px solid rgba(255,255,255,0.08)")
+                  onBlur={(event) =>
+                    (event.target.style.border = "1px solid rgba(255,255,255,0.08)")
                   }
                 />
               </div>
@@ -164,11 +198,24 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
                   AI 将自动分析需求，通过 <strong style={{ color: "rgba(255,255,255,0.6)" }}>6 个阶段</strong> 逐步完成从需求到代码的全链路自动化。你将在关键检查点参与审批。
                 </p>
               </div>
+
+              {submitError && (
+                <div
+                  className="rounded-xl px-4 py-3"
+                  style={{
+                    background: "rgba(255,69,58,0.06)",
+                    border: "1px solid rgba(255,69,58,0.18)",
+                    color: "rgba(255,255,255,0.72)",
+                    fontSize: 12,
+                  }}
+                >
+                  {submitError}
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Footer */}
         <div
           className="flex items-center justify-end gap-3 px-6 py-4"
           style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
@@ -227,25 +274,22 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
               <motion.button
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
-                disabled={!requirement.trim()}
-                onClick={() => {
-                  onClose();
-                  navigate("/pipelines/pl-001");
-                }}
+                disabled={!requirement.trim() || submitting}
+                onClick={handleSubmit}
                 className="flex items-center gap-1.5 px-5 py-2 rounded-lg"
                 style={{
                   fontSize: 13,
                   fontWeight: 500,
-                  background: requirement.trim()
+                  background: requirement.trim() && !submitting
                     ? "linear-gradient(135deg, #5B72FF, #A259FF)"
                     : "rgba(255,255,255,0.06)",
-                  color: requirement.trim() ? "white" : "rgba(255,255,255,0.3)",
+                  color: requirement.trim() && !submitting ? "white" : "rgba(255,255,255,0.3)",
                   border: "none",
-                  cursor: requirement.trim() ? "pointer" : "not-allowed",
-                  boxShadow: requirement.trim() ? "0 4px 14px rgba(91,114,255,0.3)" : "none",
+                  cursor: requirement.trim() && !submitting ? "pointer" : "not-allowed",
+                  boxShadow: requirement.trim() && !submitting ? "0 4px 14px rgba(91,114,255,0.3)" : "none",
                 }}
               >
-                <Zap size={13} /> 启动 Pipeline
+                <Zap size={13} /> {submitting ? "创建中..." : "启动 Pipeline"}
               </motion.button>
             </>
           )}
@@ -260,19 +304,27 @@ export function Pipelines() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [showModal, setShowModal] = useState(false);
+  const pipelinesQuery = useApiQuery(
+    useCallback((signal: AbortSignal) => pipelinesApi.list({ signal }), []),
+    []
+  );
 
-  const filtered = mockPipelines.filter((p) => {
-    const matchSearch =
-      search === "" ||
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.description.toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === "all" || p.status === filter;
-    return matchSearch && matchFilter;
-  });
+  const pipelines = pipelinesQuery.data ?? [];
+  const filtered = useMemo(
+    () =>
+      pipelines.filter((pipeline) => {
+        const matchSearch =
+          search === "" ||
+          pipeline.name.toLowerCase().includes(search.toLowerCase()) ||
+          pipeline.description.toLowerCase().includes(search.toLowerCase());
+        const matchFilter = filter === "all" || pipeline.status === filter;
+        return matchSearch && matchFilter;
+      }),
+    [filter, pipelines, search]
+  );
 
   return (
     <div className="h-full flex flex-col">
-      {/* Top Bar */}
       <div
         className="flex items-center justify-between px-8 py-5"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -282,7 +334,7 @@ export function Pipelines() {
             流水线
           </h1>
           <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-            {mockPipelines.length} 条流水线
+            {pipelinesQuery.loading ? "正在加载..." : `${pipelines.length} 条流水线`}
           </p>
         </div>
         <motion.button
@@ -305,12 +357,40 @@ export function Pipelines() {
         </motion.button>
       </div>
 
-      {/* Filters */}
+      {pipelinesQuery.error && (
+        <div className="px-8 pt-5">
+          <div
+            className="rounded-2xl p-4 flex items-center justify-between"
+            style={{
+              background: "rgba(255,69,58,0.06)",
+              border: "1px solid rgba(255,69,58,0.18)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
+              {pipelinesQuery.error}
+            </span>
+            <button
+              onClick={pipelinesQuery.reload}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.65)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <RotateCcw size={12} />
+              重试
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className="flex items-center gap-4 px-8 py-3"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
       >
-        {/* Search */}
         <div className="relative flex-1 max-w-xs">
           <Search
             size={13}
@@ -319,7 +399,7 @@ export function Pipelines() {
           />
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(event) => setSearch(event.target.value)}
             placeholder="搜索流水线..."
             className="w-full pl-9 pr-3 py-2 rounded-lg"
             style={{
@@ -332,43 +412,52 @@ export function Pipelines() {
           />
         </div>
 
-        {/* Status Filter */}
         <div className="flex items-center gap-1">
           <Filter size={11} style={{ color: "rgba(255,255,255,0.3)" }} />
-          {["all", "running", "paused", "completed", "failed"].map((f) => (
+          {["all", "running", "paused", "completed", "failed"].map((status) => (
             <button
-              key={f}
-              onClick={() => setFilter(f)}
+              key={status}
+              onClick={() => setFilter(status)}
               className="px-3 py-1 rounded-lg transition-all"
               style={{
                 fontSize: 11,
-                background: filter === f ? "rgba(91,114,255,0.15)" : "rgba(255,255,255,0.03)",
-                color:
-                  filter === f ? "#A0ABFF" : "rgba(255,255,255,0.4)",
-                border: `1px solid ${filter === f ? "rgba(91,114,255,0.25)" : "rgba(255,255,255,0.06)"}`,
+                background: filter === status ? "rgba(91,114,255,0.15)" : "rgba(255,255,255,0.03)",
+                color: filter === status ? "#A0ABFF" : "rgba(255,255,255,0.4)",
+                border: `1px solid ${
+                  filter === status ? "rgba(91,114,255,0.25)" : "rgba(255,255,255,0.06)"
+                }`,
                 cursor: "pointer",
               }}
             >
-              {f === "all" ? "全部" : f === "running" ? "运行中" : f === "paused" ? "暂停" : f === "completed" ? "已完成" : "失败"}
+              {status === "all"
+                ? "全部"
+                : status === "running"
+                ? "运行中"
+                : status === "paused"
+                ? "暂停"
+                : status === "completed"
+                ? "已完成"
+                : "失败"}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Pipeline List */}
       <div className="flex-1 overflow-y-auto px-8 py-5 space-y-3">
-        {filtered.map((pipeline, i) => (
+        {filtered.map((pipeline, index) => (
           <PipelineCard
             key={pipeline.id}
             pipeline={pipeline}
-            index={i}
+            index={index}
             onClick={() => navigate(`/pipelines/${pipeline.id}`)}
           />
         ))}
-        {filtered.length === 0 && (
+        {!pipelinesQuery.loading && filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20">
             <GitBranch size={32} style={{ color: "rgba(255,255,255,0.1)", marginBottom: 12 }} />
-            <p style={{ fontSize: 14, color: "rgba(255,255,255,0.3)" }}>未找到匹配的流水线</p>
+            <p style={{ fontSize: 14, color: "rgba(255,255,255,0.3)" }}>
+              {search || filter !== "all" ? "未找到匹配的流水线" : "暂无流水线数据"}
+            </p>
           </div>
         )}
       </div>
@@ -402,11 +491,11 @@ function PipelineCard({
         border: "1px solid rgba(255,255,255,0.07)",
         transition: "all 0.15s ease",
       }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.border = "1px solid rgba(255,255,255,0.12)")
+      onMouseEnter={(event) =>
+        (event.currentTarget.style.border = "1px solid rgba(255,255,255,0.12)")
       }
-      onMouseLeave={(e) =>
-        (e.currentTarget.style.border = "1px solid rgba(255,255,255,0.07)")
+      onMouseLeave={(event) =>
+        (event.currentTarget.style.border = "1px solid rgba(255,255,255,0.07)")
       }
     >
       <div className="flex items-start justify-between mb-3">
@@ -448,13 +537,12 @@ function PipelineCard({
         </div>
       </div>
 
-      {/* Stage Progress */}
       <div className="flex items-center gap-1 mb-3">
-        {stageLabels.map((label, i) => {
-          const stage = pipeline.stages[i];
+        {stageLabels.map((label, stageIndex) => {
+          const stage = pipeline.stages[stageIndex];
           const status = stage?.status || "idle";
           return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
+            <div key={label} className="flex-1 flex flex-col items-center gap-1">
               <div
                 className="w-full h-1 rounded-full overflow-hidden"
                 style={{ background: "rgba(255,255,255,0.06)" }}
@@ -468,7 +556,7 @@ function PipelineCard({
                       status === "running" ? "60%" :
                       "0%",
                   }}
-                  transition={{ duration: 0.6, delay: 0.1 * i }}
+                  transition={{ duration: 0.6, delay: 0.1 * stageIndex }}
                   style={{
                     background:
                       status === "completed" ? "#34C759" :
@@ -497,7 +585,6 @@ function PipelineCard({
         })}
       </div>
 
-      {/* Footer */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>

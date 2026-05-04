@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -13,59 +13,82 @@ import {
   AlertTriangle,
   Eye,
 } from "lucide-react";
-import { mockCheckpoints } from "../data/mockData";
-
-type CheckpointStatus = "pending" | "approved" | "rejected";
-
-interface LocalCheckpoint {
-  id: string;
-  pipelineId: string;
-  pipelineName: string;
-  stage: string;
-  stageIndex: number;
-  status: CheckpointStatus;
-  createdAt: string;
-  output: string;
-  rejectReason?: string;
-}
+import { useApiQuery } from "../hooks/useApiQuery";
+import { checkpointsApi } from "../lib/api/services";
+import type { Checkpoint } from "../types/checkpoint";
 
 export function CheckpointReview() {
   const navigate = useNavigate();
-  const [checkpoints, setCheckpoints] = useState<LocalCheckpoint[]>(
-    mockCheckpoints.map((c) => ({ ...c, status: "pending" as CheckpointStatus }))
-  );
-  const [selected, setSelected] = useState<string>(checkpoints[0]?.id || "");
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [selected, setSelected] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [actionDone, setActionDone] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const checkpointsQuery = useApiQuery(
+    useCallback((signal: AbortSignal) => checkpointsApi.list({ signal }), []),
+    []
+  );
 
-  const selectedCp = checkpoints.find((c) => c.id === selected);
-  const pendingCount = checkpoints.filter((c) => c.status === "pending").length;
+  useEffect(() => {
+    if (checkpointsQuery.data) {
+      setCheckpoints(checkpointsQuery.data);
+    }
+  }, [checkpointsQuery.data]);
 
-  const handleApprove = (id: string) => {
-    setCheckpoints((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, status: "approved" } : c))
-    );
-    setActionDone("approved");
-    setTimeout(() => setActionDone(null), 3000);
+  useEffect(() => {
+    if (!selected && checkpoints[0]) {
+      setSelected(checkpoints[0].id);
+      return;
+    }
+
+    if (selected && !checkpoints.some((checkpoint) => checkpoint.id === selected)) {
+      setSelected(checkpoints[0]?.id ?? "");
+    }
+  }, [checkpoints, selected]);
+
+  const selectedCp = useMemo(
+    () => checkpoints.find((checkpoint) => checkpoint.id === selected),
+    [checkpoints, selected]
+  );
+  const pendingCount = checkpoints.filter((checkpoint) => checkpoint.status === "pending").length;
+
+  const handleApprove = async (id: string) => {
+    if (submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const updated = await checkpointsApi.approve(id);
+      setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      setActionDone("approved");
+      setTimeout(() => setActionDone(null), 3000);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleReject = (id: string) => {
-    if (!rejectReason.trim()) return;
-    setCheckpoints((prev) =>
-      prev.map((c) =>
-        c.id === id ? { ...c, status: "rejected", rejectReason } : c
-      )
-    );
-    setShowRejectInput(false);
-    setRejectReason("");
-    setActionDone("rejected");
-    setTimeout(() => setActionDone(null), 3000);
+  const handleReject = async (id: string) => {
+    if (!rejectReason.trim() || submitting) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const updated = await checkpointsApi.reject(id, rejectReason.trim());
+      setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      setShowRejectInput(false);
+      setRejectReason("");
+      setActionDone("rejected");
+      setTimeout(() => setActionDone(null), 3000);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
       <div
         className="flex items-center justify-between px-8 py-5 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -96,30 +119,59 @@ export function CheckpointReview() {
         </div>
       </div>
 
+      {checkpointsQuery.error && (
+        <div className="px-8 pt-5">
+          <div
+            className="rounded-2xl p-4 flex items-center justify-between"
+            style={{
+              background: "rgba(255,69,58,0.06)",
+              border: "1px solid rgba(255,69,58,0.18)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
+              {checkpointsQuery.error}
+            </span>
+            <button
+              onClick={checkpointsQuery.reload}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.65)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <RotateCcw size={12} />
+              重试
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Checkpoint List */}
         <div
           className="w-72 flex-shrink-0 overflow-y-auto p-4 space-y-2"
           style={{ borderRight: "1px solid rgba(255,255,255,0.05)" }}
         >
-          {checkpoints.map((cp, i) => (
+          {checkpoints.map((checkpoint, index) => (
             <motion.div
-              key={cp.id}
+              key={checkpoint.id}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: index * 0.05 }}
               onClick={() => {
-                setSelected(cp.id);
+                setSelected(checkpoint.id);
                 setShowRejectInput(false);
               }}
               className="p-4 rounded-xl cursor-pointer transition-all"
               style={{
                 background:
-                  selected === cp.id
+                  selected === checkpoint.id
                     ? "rgba(91,114,255,0.08)"
                     : "rgba(255,255,255,0.025)",
                 border: `1px solid ${
-                  selected === cp.id
+                  selected === checkpoint.id
                     ? "rgba(91,114,255,0.25)"
                     : "rgba(255,255,255,0.07)"
                 }`,
@@ -131,16 +183,16 @@ export function CheckpointReview() {
                     className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0"
                     style={{
                       background:
-                        cp.status === "approved"
+                        checkpoint.status === "approved"
                           ? "rgba(52,199,89,0.15)"
-                          : cp.status === "rejected"
+                          : checkpoint.status === "rejected"
                           ? "rgba(255,69,58,0.15)"
                           : "rgba(255,159,10,0.15)",
                     }}
                   >
-                    {cp.status === "approved" ? (
+                    {checkpoint.status === "approved" ? (
                       <Check size={11} style={{ color: "#34C759" }} />
-                    ) : cp.status === "rejected" ? (
+                    ) : checkpoint.status === "rejected" ? (
                       <X size={11} style={{ color: "#FF453A" }} />
                     ) : (
                       <CheckSquare size={11} style={{ color: "#FF9F0A" }} />
@@ -151,16 +203,16 @@ export function CheckpointReview() {
                       fontSize: 11,
                       fontWeight: 500,
                       color:
-                        cp.status === "approved"
+                        checkpoint.status === "approved"
                           ? "#34C759"
-                          : cp.status === "rejected"
+                          : checkpoint.status === "rejected"
                           ? "#FF453A"
                           : "#FF9F0A",
                     }}
                   >
-                    {cp.status === "approved"
+                    {checkpoint.status === "approved"
                       ? "已通过"
-                      : cp.status === "rejected"
+                      : checkpoint.status === "rejected"
                       ? "已拒绝"
                       : "待审批"}
                   </span>
@@ -180,18 +232,18 @@ export function CheckpointReview() {
                 }}
                 className="truncate"
               >
-                {cp.pipelineName}
+                {checkpoint.pipelineName}
               </div>
               <div className="flex items-center gap-1.5">
                 <GitBranch size={9} style={{ color: "rgba(255,255,255,0.3)" }} />
                 <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
-                  {cp.stage} · 检查点
+                  {checkpoint.stage} · 检查点
                 </span>
               </div>
               <div className="flex items-center gap-1 mt-2">
                 <Clock size={9} style={{ color: "rgba(255,255,255,0.25)" }} />
                 <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
-                  {new Date(cp.createdAt).toLocaleString("zh-CN", {
+                  {new Date(checkpoint.createdAt).toLocaleString("zh-CN", {
                     month: "short",
                     day: "numeric",
                     hour: "2-digit",
@@ -203,10 +255,8 @@ export function CheckpointReview() {
           ))}
         </div>
 
-        {/* Right: Review Panel */}
         {selectedCp ? (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Review Header */}
             <div
               className="flex items-center justify-between px-6 py-4 flex-shrink-0"
               style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -238,7 +288,6 @@ export function CheckpointReview() {
               </button>
             </div>
 
-            {/* Output Content */}
             <div className="flex-1 overflow-y-auto p-6">
               <div
                 className="rounded-2xl overflow-hidden"
@@ -302,7 +351,6 @@ export function CheckpointReview() {
               )}
             </div>
 
-            {/* Action Area */}
             <div
               className="flex-shrink-0 px-6 py-5"
               style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}
@@ -369,7 +417,7 @@ export function CheckpointReview() {
                         </label>
                         <textarea
                           value={rejectReason}
-                          onChange={(e) => setRejectReason(e.target.value)}
+                          onChange={(event) => setRejectReason(event.target.value)}
                           placeholder="请描述问题或需要 Agent 重新考虑的点，这将作为反馈传递给 Agent..."
                           rows={3}
                           className="w-full px-4 py-3 rounded-xl resize-none"
@@ -400,25 +448,25 @@ export function CheckpointReview() {
                         <motion.button
                           whileHover={{ scale: 1.02 }}
                           whileTap={{ scale: 0.98 }}
-                          disabled={!rejectReason.trim()}
+                          disabled={!rejectReason.trim() || submitting}
                           onClick={() => handleReject(selectedCp.id)}
                           className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg flex-1"
                           style={{
-                            background: rejectReason.trim()
+                            background: rejectReason.trim() && !submitting
                               ? "rgba(255,69,58,0.15)"
                               : "rgba(255,255,255,0.04)",
                             border: `1px solid ${
-                              rejectReason.trim()
+                              rejectReason.trim() && !submitting
                                 ? "rgba(255,69,58,0.3)"
                                 : "rgba(255,255,255,0.06)"
                             }`,
-                            color: rejectReason.trim() ? "#FF453A" : "rgba(255,255,255,0.3)",
+                            color: rejectReason.trim() && !submitting ? "#FF453A" : "rgba(255,255,255,0.3)",
                             fontSize: 12,
                             fontWeight: 500,
-                            cursor: rejectReason.trim() ? "pointer" : "not-allowed",
+                            cursor: rejectReason.trim() && !submitting ? "pointer" : "not-allowed",
                           }}
                         >
-                          <RotateCcw size={12} /> 确认拒绝并重做
+                          <RotateCcw size={12} /> {submitting ? "提交中..." : "确认拒绝并重做"}
                         </motion.button>
                       </div>
                     </motion.div>
@@ -428,6 +476,7 @@ export function CheckpointReview() {
                         whileHover={{ scale: 1.02, y: -1 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => setShowRejectInput(true)}
+                        disabled={submitting}
                         className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl flex-1"
                         style={{
                           background: "rgba(255,69,58,0.06)",
@@ -435,7 +484,8 @@ export function CheckpointReview() {
                           color: "#FF453A",
                           fontSize: 13,
                           fontWeight: 500,
-                          cursor: "pointer",
+                          cursor: submitting ? "not-allowed" : "pointer",
+                          opacity: submitting ? 0.6 : 1,
                         }}
                       >
                         <X size={14} />
@@ -447,6 +497,7 @@ export function CheckpointReview() {
                         whileHover={{ scale: 1.02, y: -1 }}
                         whileTap={{ scale: 0.97 }}
                         onClick={() => handleApprove(selectedCp.id)}
+                        disabled={submitting}
                         className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl flex-1"
                         style={{
                           background: "rgba(52,199,89,0.1)",
@@ -454,12 +505,13 @@ export function CheckpointReview() {
                           color: "#34C759",
                           fontSize: 13,
                           fontWeight: 500,
-                          cursor: "pointer",
+                          cursor: submitting ? "not-allowed" : "pointer",
                           boxShadow: "0 4px 16px rgba(52,199,89,0.1)",
+                          opacity: submitting ? 0.6 : 1,
                         }}
                       >
                         <Check size={14} />
-                        Approve
+                        {submitting ? "提交中..." : "Approve"}
                         <span style={{ fontSize: 10, opacity: 0.6 }}>（继续下一阶段）</span>
                       </motion.button>
                     </div>
@@ -493,7 +545,9 @@ export function CheckpointReview() {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <CheckSquare size={40} style={{ color: "rgba(255,255,255,0.08)", margin: "0 auto 12px" }} />
-              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.3)" }}>暂无待审批检查点</p>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.3)" }}>
+                {checkpointsQuery.loading ? "正在加载检查点..." : "暂无待审批检查点"}
+              </p>
             </div>
           </div>
         )}

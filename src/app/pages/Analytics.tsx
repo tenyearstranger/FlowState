@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { motion } from "motion/react";
 import {
   AreaChart,
@@ -9,48 +10,10 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
 } from "recharts";
-import { BarChart2, Zap, Clock, TrendingUp, CheckCircle } from "lucide-react";
-
-const pipelineRunData = [
-  { day: "4/28", success: 3, failed: 0, total: 3 },
-  { day: "4/29", success: 5, failed: 1, total: 6 },
-  { day: "4/30", success: 4, failed: 0, total: 4 },
-  { day: "5/1", success: 6, failed: 1, total: 7 },
-  { day: "5/2", success: 8, failed: 0, total: 8 },
-  { day: "5/3", success: 7, failed: 2, total: 9 },
-  { day: "5/4", success: 3, failed: 1, total: 4 },
-];
-
-const tokenUsageData = [
-  { time: "08:00", tokens: 2400 },
-  { time: "09:00", tokens: 8600 },
-  { time: "10:00", tokens: 5200 },
-  { time: "11:00", tokens: 12400 },
-  { time: "12:00", tokens: 3800 },
-  { time: "13:00", tokens: 9200 },
-  { time: "14:00", tokens: 14600 },
-];
-
-const stageDurationData = [
-  { stage: "需求分析", avg: 38, p95: 62 },
-  { stage: "方案设计", avg: 92, p95: 145 },
-  { stage: "代码生成", avg: 145, p95: 220 },
-  { stage: "测试生成", avg: 67, p95: 98 },
-  { stage: "代码评审", avg: 78, p95: 130 },
-  { stage: "交付集成", avg: 25, p95: 38 },
-];
-
-const agentSuccessData = [
-  { name: "RequirementsAgent", rate: 98.2 },
-  { name: "ArchitectAgent", rate: 95.1 },
-  { name: "CodegenAgent", rate: 91.8 },
-  { name: "TestAgent", rate: 88.4 },
-  { name: "ReviewAgent", rate: 97.3 },
-  { name: "DeliveryAgent", rate: 99.1 },
-];
+import { BarChart2, Zap, Clock, TrendingUp, CheckCircle, RotateCcw } from "lucide-react";
+import { useApiQuery } from "../hooks/useApiQuery";
+import { analyticsApi } from "../lib/api/services";
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -66,9 +29,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         }}
       >
         <p style={{ color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{label}</p>
-        {payload.map((p: any, i: number) => (
-          <p key={i} style={{ color: p.color }}>
-            {p.name}: {p.value}
+        {payload.map((entry: any, index: number) => (
+          <p key={index} style={{ color: entry.color }}>
+            {entry.name}: {entry.value}
           </p>
         ))}
       </div>
@@ -78,14 +41,15 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function Analytics() {
-  const totalRuns = pipelineRunData.reduce((s, d) => s + d.total, 0);
-  const totalSuccess = pipelineRunData.reduce((s, d) => s + d.success, 0);
-  const successRate = ((totalSuccess / totalRuns) * 100).toFixed(1);
-  const totalTokens = tokenUsageData.reduce((s, d) => s + d.tokens, 0);
+  const analyticsQuery = useApiQuery(
+    useCallback((signal: AbortSignal) => analyticsApi.getOverview({ signal }), []),
+    []
+  );
+  const analytics = analyticsQuery.data;
+  const summary = analytics?.summary;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
       <div
         className="flex items-center justify-between px-8 py-5 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -116,25 +80,72 @@ export function Analytics() {
             />
           </span>
           <span style={{ fontSize: 11, color: "rgba(52,199,89,0.9)", fontWeight: 500 }}>
-            实时数据
+            {analyticsQuery.loading ? "同步中" : "实时数据"}
           </span>
         </div>
       </div>
 
+      {analyticsQuery.error && (
+        <div className="px-6 pt-5">
+          <div
+            className="rounded-2xl p-4 flex items-center justify-between"
+            style={{
+              background: "rgba(255,69,58,0.06)",
+              border: "1px solid rgba(255,69,58,0.18)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
+              {analyticsQuery.error}
+            </span>
+            <button
+              onClick={analyticsQuery.reload}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.65)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <RotateCcw size={12} />
+              重试
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-6">
-        {/* Top Stats */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           {[
-            { label: "总运行次数", value: totalRuns, unit: "次", icon: BarChart2, color: "#5B72FF" },
-            { label: "成功率", value: `${successRate}%`, unit: "", icon: CheckCircle, color: "#34C759" },
-            { label: "今日 Token 消耗", value: (totalTokens / 1000).toFixed(1) + "K", unit: "", icon: Zap, color: "#FF9F0A" },
-            { label: "平均耗时", value: "7.4m", unit: "", icon: Clock, color: "#A259FF" },
-          ].map((stat, i) => (
+            { label: "总运行次数", value: summary?.totalRuns ?? "--", icon: BarChart2, color: "#5B72FF" },
+            {
+              label: "成功率",
+              value:
+                summary && summary.totalRuns > 0
+                  ? `${((summary.totalSuccess / summary.totalRuns) * 100).toFixed(1)}%`
+                  : "--",
+              icon: CheckCircle,
+              color: "#34C759",
+            },
+            {
+              label: "今日 Token 消耗",
+              value: summary ? `${(summary.totalTokens / 1000).toFixed(1)}K` : "--",
+              icon: Zap,
+              color: "#FF9F0A",
+            },
+            {
+              label: "平均耗时",
+              value: summary ? `${summary.averageDurationMinutes.toFixed(1)}m` : "--",
+              icon: Clock,
+              color: "#A259FF",
+            },
+          ].map((stat, index) => (
             <motion.div
               key={stat.label}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ delay: index * 0.05 }}
               className="rounded-2xl p-5"
               style={{
                 background: "rgba(255,255,255,0.03)",
@@ -159,9 +170,7 @@ export function Analytics() {
           ))}
         </div>
 
-        {/* Charts Row 1 */}
         <div className="grid grid-cols-2 gap-5 mb-5">
-          {/* Pipeline Runs */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -179,7 +188,7 @@ export function Analytics() {
               </span>
             </div>
             <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={pipelineRunData} barSize={20} barGap={4}>
+              <BarChart data={analytics?.pipelineRuns ?? []} barSize={20} barGap={4}>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   stroke="rgba(255,255,255,0.04)"
@@ -214,7 +223,6 @@ export function Analytics() {
             </div>
           </motion.div>
 
-          {/* Token Usage */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -232,7 +240,7 @@ export function Analytics() {
               </span>
             </div>
             <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={tokenUsageData}>
+              <AreaChart data={analytics?.tokenUsage ?? []}>
                 <defs>
                   <linearGradient id="tokenGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#FF9F0A" stopOpacity={0.25} />
@@ -270,9 +278,7 @@ export function Analytics() {
           </motion.div>
         </div>
 
-        {/* Charts Row 2 */}
         <div className="grid grid-cols-2 gap-5">
-          {/* Stage Duration */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -290,7 +296,7 @@ export function Analytics() {
               </span>
             </div>
             <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={stageDurationData} layout="vertical" barSize={10}>
+              <BarChart data={analytics?.stageDurations ?? []} layout="vertical" barSize={10}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
                 <XAxis
                   type="number"
@@ -313,7 +319,6 @@ export function Analytics() {
             </ResponsiveContainer>
           </motion.div>
 
-          {/* Agent Success Rate */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -331,7 +336,7 @@ export function Analytics() {
               </span>
             </div>
             <div className="space-y-3">
-              {agentSuccessData.map((agent, i) => (
+              {(analytics?.agentSuccessRates ?? []).map((agent, index) => (
                 <div key={agent.name} className="flex items-center gap-3">
                   <div
                     className="flex-shrink-0"
@@ -355,7 +360,7 @@ export function Analytics() {
                       className="h-full rounded-full"
                       initial={{ width: 0 }}
                       animate={{ width: `${agent.rate}%` }}
-                      transition={{ duration: 0.8, delay: 0.4 + i * 0.06, ease: "easeOut" }}
+                      transition={{ duration: 0.8, delay: 0.4 + index * 0.06, ease: "easeOut" }}
                       style={{
                         background:
                           agent.rate >= 97
@@ -385,6 +390,12 @@ export function Analytics() {
                   </span>
                 </div>
               ))}
+
+              {!analyticsQuery.loading && (analytics?.agentSuccessRates.length ?? 0) === 0 && (
+                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
+                  暂无统计数据
+                </div>
+              )}
             </div>
           </motion.div>
         </div>

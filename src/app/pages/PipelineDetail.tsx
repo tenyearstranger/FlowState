@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   ArrowLeft,
   Play,
@@ -17,8 +17,10 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import { mockPipelines, type PipelineStage, type StageStatus } from "../data/mockData";
 import { StatusBadge } from "../components/ui/StatusBadge";
+import { useApiQuery } from "../hooks/useApiQuery";
+import { pipelinesApi } from "../lib/api/services";
+import type { PipelineStage } from "../types/pipeline";
 
 const stageColors: Record<string, string> = {
   "需求分析": "#5B72FF",
@@ -28,30 +30,6 @@ const stageColors: Record<string, string> = {
   "代码评审": "#FF9F0A",
   "交付集成": "#00C7BE",
 };
-
-const mockLogs = [
-  "[08:30:01] Pipeline pl-001 已启动",
-  "[08:30:02] RequirementsAgent 初始化，模型: gpt-4o",
-  "[08:30:04] 正在解析需求描述...",
-  "[08:30:18] 检测到 4 个功能点，正在结构化...",
-  "[08:30:35] 需求分析完成，输出 423 tokens",
-  "[08:30:36] ArchitectAgent 初始化，模型: claude-3-7-sonnet",
-  "[08:30:37] 正在分析代码库结构 (src/)...",
-  "[08:30:52] 识别到 3 个相关文件",
-  "[08:31:08] 技术方案已生成，触发检查点 [方案设计审批]",
-  "[08:31:09] ⏸ 等待人工审批...",
-  "[08:42:31] ✓ 人工审批通过 (reviewer: Admin)",
-  "[08:42:32] CodegenAgent 初始化，模型: claude-3-7-sonnet",
-  "[08:42:35] 开始生成代码变更集...",
-  "[08:42:37] 生成 src/auth/auth.service.ts (+187 行)",
-  "[08:43:01] 生成 src/auth/auth.controller.ts (+94 行)",
-  "[08:43:19] 生成 src/auth/auth.module.ts (+32 行)",
-  "[08:43:44] 生成 src/auth/jwt.strategy.ts (+45 行)",
-  "[08:44:12] 代码生成完成，共 401 行变更",
-  "[08:44:13] TestAgent 初始化，模型: gpt-4o-mini",
-  "[08:44:15] 正在分析代码变更集...",
-  "[08:44:23] 生成测试用例 (预计 18 个)...",
-];
 
 function OutputPanel({ stage }: { stage: PipelineStage }) {
   const [copied, setCopied] = useState(false);
@@ -129,7 +107,7 @@ function StageCard({
   const color = stageColors[stage.name] || "#5B72FF";
 
   const statusIcon = () => {
-    if (stage.status === "completed")
+    if (stage.status === "completed") {
       return (
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center"
@@ -140,7 +118,8 @@ function StageCard({
           </svg>
         </div>
       );
-    if (stage.status === "running")
+    }
+    if (stage.status === "running") {
       return (
         <div className="relative w-6 h-6 flex items-center justify-center">
           <div
@@ -154,7 +133,8 @@ function StageCard({
           <Bot size={10} style={{ color }} />
         </div>
       );
-    if (stage.status === "awaiting_review")
+    }
+    if (stage.status === "awaiting_review") {
       return (
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center"
@@ -163,15 +143,17 @@ function StageCard({
           <CheckSquare size={10} style={{ color: "#FF9F0A" }} />
         </div>
       );
-    if (stage.status === "failed")
+    }
+    if (stage.status === "failed") {
       return (
         <div
           className="w-6 h-6 rounded-full flex items-center justify-center"
           style={{ background: "rgba(255,69,58,0.15)", border: "1px solid rgba(255,69,58,0.3)" }}
         >
-          <span style={{ fontSize: 12, color: "#FF453A", fontWeight: 700, lineHeight: 1 }}>×</span>
+          <span style={{ fontSize: 12, color: "#FF453A", fontWeight: 700, lineHeight: 1 }}>x</span>
         </div>
       );
+    }
     return (
       <div
         className="w-6 h-6 rounded-full flex items-center justify-center"
@@ -227,9 +209,7 @@ function StageCard({
           </div>
           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{stage.agent}</span>
         </div>
-        {stage.status !== "idle" && (
-          <StatusBadge status={stage.status as any} size="sm" />
-        )}
+        {stage.status !== "idle" && <StatusBadge status={stage.status as any} size="sm" />}
       </div>
 
       {stage.status !== "idle" && (
@@ -255,35 +235,124 @@ function StageCard({
 export function PipelineDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const pipeline = mockPipelines.find((p) => p.id === id) || mockPipelines[0];
-
-  const [selectedStage, setSelectedStage] = useState<string>(
-    pipeline.stages.find((s) => s.status === "running" || s.status === "awaiting_review")?.id ||
-      pipeline.stages[0].id
-  );
+  const [selectedStage, setSelectedStage] = useState("");
   const [showLogs, setShowLogs] = useState(true);
-  const [logCount, setLogCount] = useState(mockLogs.length);
+  const [logCount, setLogCount] = useState(0);
   const logsEndRef = useRef<HTMLDivElement>(null);
-  const activeStage = pipeline.stages.find((s) => s.id === selectedStage);
 
-  // Simulate streaming logs
+  const pipelineQuery = useApiQuery(
+    useCallback(
+      (signal: AbortSignal) => {
+        if (!id) {
+          return Promise.reject(new Error("缺少流水线 ID"));
+        }
+        return pipelinesApi.getById(id, { signal });
+      },
+      [id]
+    ),
+    [id],
+    { enabled: Boolean(id) }
+  );
+
+  const logsQuery = useApiQuery(
+    useCallback(
+      (signal: AbortSignal) => {
+        if (!id) {
+          return Promise.resolve<string[]>([]);
+        }
+        return pipelinesApi.logs(id, { signal });
+      },
+      [id]
+    ),
+    [id],
+    { enabled: Boolean(id), initialData: [] }
+  );
+
+  const pipeline = pipelineQuery.data;
+  const logs = logsQuery.data ?? [];
+  const activeStage = useMemo(
+    () => pipeline?.stages.find((stage) => stage.id === selectedStage),
+    [pipeline, selectedStage]
+  );
+
   useEffect(() => {
-    if (pipeline.status !== "running") return;
+    if (!pipeline) {
+      return;
+    }
+
+    const defaultStageId =
+      pipeline.stages.find((stage) => stage.status === "running" || stage.status === "awaiting_review")?.id ||
+      pipeline.stages[0]?.id ||
+      "";
+
+    if (!selectedStage || !pipeline.stages.some((stage) => stage.id === selectedStage)) {
+      setSelectedStage(defaultStageId);
+    }
+  }, [pipeline, selectedStage]);
+
+  useEffect(() => {
+    if (!pipeline) {
+      return;
+    }
+
+    if (pipeline.status === "running") {
+      setLogCount(Math.min(logs.length, 8));
+      return;
+    }
+
+    setLogCount(logs.length);
+  }, [logs.length, pipeline]);
+
+  useEffect(() => {
+    if (pipeline?.status !== "running" || logCount >= logs.length) {
+      return;
+    }
+
     const interval = setInterval(() => {
-      setLogCount((c) => Math.min(c + 1, mockLogs.length + 5));
-    }, 2500);
+      setLogCount((count) => Math.min(count + 1, logs.length));
+    }, 1200);
+
     return () => clearInterval(interval);
-  }, [pipeline.status]);
+  }, [logCount, logs.length, pipeline?.status]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logCount]);
 
+  if (pipelineQuery.loading && !pipeline) {
+    return (
+      <div className="h-full flex items-center justify-center" style={{ color: "rgba(255,255,255,0.35)" }}>
+        正在加载流水线详情...
+      </div>
+    );
+  }
+
+  if (pipelineQuery.error || !pipeline) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-4">
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.6)" }}>
+          {pipelineQuery.error ?? "未找到流水线"}
+        </div>
+        <button
+          onClick={() => navigate("/pipelines")}
+          className="px-4 py-2 rounded-lg"
+          style={{
+            background: "rgba(255,255,255,0.05)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            color: "rgba(255,255,255,0.7)",
+            cursor: "pointer",
+          }}
+        >
+          返回列表
+        </button>
+      </div>
+    );
+  }
+
   const progressPercent = pipeline.progress;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Top Bar */}
       <div
         className="flex items-center gap-4 px-6 py-4 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -315,7 +384,6 @@ export function PipelineDetail() {
           </div>
         </div>
 
-        {/* Progress */}
         <div className="flex items-center gap-3">
           <div
             className="w-32 h-1.5 rounded-full overflow-hidden"
@@ -334,7 +402,6 @@ export function PipelineDetail() {
           </span>
         </div>
 
-        {/* Controls */}
         <div className="flex items-center gap-2">
           {pipeline.status === "running" && (
             <>
@@ -381,32 +448,27 @@ export function PipelineDetail() {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden flex gap-0">
-        {/* Left: Stage List */}
         <div
           className="w-64 flex-shrink-0 overflow-y-auto p-4 space-y-2"
           style={{ borderRight: "1px solid rgba(255,255,255,0.05)" }}
         >
-          {/* Stage connector flow */}
-          {pipeline.stages.map((stage, i) => (
+          {pipeline.stages.map((stage, index) => (
             <div key={stage.id} className="relative">
               <StageCard
                 stage={stage}
-                index={i}
+                index={index}
                 isActive={selectedStage === stage.id}
                 onClick={() => setSelectedStage(stage.id)}
               />
-              {i < pipeline.stages.length - 1 && (
-                <div
-                  className="flex items-center justify-center py-0.5"
-                >
+              {index < pipeline.stages.length - 1 && (
+                <div className="flex items-center justify-center py-0.5">
                   <div
                     className="w-px"
                     style={{
                       height: 12,
                       background:
-                        pipeline.stages[i + 1].status !== "idle"
+                        pipeline.stages[index + 1].status !== "idle"
                           ? "rgba(91,114,255,0.3)"
                           : "rgba(255,255,255,0.06)",
                     }}
@@ -417,11 +479,9 @@ export function PipelineDetail() {
           ))}
         </div>
 
-        {/* Right: Stage Detail */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeStage && (
             <div className="flex-1 overflow-y-auto">
-              {/* Stage header */}
               <div
                 className="flex items-center justify-between px-6 py-4 sticky top-0 z-10"
                 style={{
@@ -470,7 +530,6 @@ export function PipelineDetail() {
                 </div>
               </div>
 
-              {/* Checkpoint Banner */}
               {activeStage.status === "awaiting_review" && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
@@ -509,7 +568,6 @@ export function PipelineDetail() {
                 </motion.div>
               )}
 
-              {/* Running indicator */}
               {activeStage.status === "running" && (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -521,11 +579,11 @@ export function PipelineDetail() {
                   }}
                 >
                   <div className="flex gap-1">
-                    {[0, 1, 2].map((i) => (
+                    {[0, 1, 2].map((index) => (
                       <motion.div
-                        key={i}
+                        key={index}
                         animate={{ opacity: [0.3, 1, 0.3] }}
-                        transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                        transition={{ duration: 1.2, repeat: Infinity, delay: index * 0.2 }}
                         className="w-1.5 h-1.5 rounded-full"
                         style={{ background: "#5B72FF" }}
                       />
@@ -537,7 +595,6 @@ export function PipelineDetail() {
                 </motion.div>
               )}
 
-              {/* Output */}
               <div className="p-6">
                 <div
                   className="flex items-center gap-2 mb-3"
@@ -551,7 +608,6 @@ export function PipelineDetail() {
             </div>
           )}
 
-          {/* Log Panel */}
           <div
             className="flex-shrink-0"
             style={{
@@ -587,10 +643,15 @@ export function PipelineDetail() {
                   fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
                 }}
               >
-                {mockLogs.slice(0, logCount).map((log, i) => (
+                {logsQuery.error && (
+                  <div style={{ fontSize: 11, color: "#FF453A", lineHeight: 1.8 }}>
+                    {logsQuery.error}
+                  </div>
+                )}
+                {logs.slice(0, logCount).map((log, index) => (
                   <motion.div
-                    key={i}
-                    initial={i >= logCount - 1 ? { opacity: 0 } : { opacity: 1 }}
+                    key={`${index}-${log}`}
+                    initial={index >= logCount - 1 ? { opacity: 0 } : { opacity: 1 }}
                     animate={{ opacity: 1 }}
                     style={{
                       fontSize: 11,
