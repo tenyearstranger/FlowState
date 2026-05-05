@@ -53,6 +53,8 @@ async function parseResponse<T>(response: Response): Promise<T> {
     const message =
       typeof body === "object" && body && "message" in body
         ? String(body.message)
+        : typeof body === "object" && body && "detail" in body
+        ? String(body.detail)
         : typeof body === "string" && body
         ? body
         : "请求失败，请稍后重试";

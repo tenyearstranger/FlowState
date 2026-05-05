@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
 
 const isDev = !app.isPackaged
@@ -23,6 +23,20 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ipcMain.handle('dialog:choose-directory', async () => {
+    const browserWindow = BrowserWindow.getFocusedWindow()
+    const options: OpenDialogOptions = { properties: ['openDirectory'] }
+    const result = browserWindow
+      ? await dialog.showOpenDialog(browserWindow, options)
+      : await dialog.showOpenDialog(options)
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+
+    return result.filePaths[0]
+  })
+
   createWindow()
 
   app.on('activate', () => {

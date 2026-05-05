@@ -31,9 +31,12 @@ export interface Pipeline {
   createdAt: string;
   updatedAt: string;
   template?: string;
+  projectPath?: string;
+  projectSummary?: string;
+  requirementDocPath?: string;
 }
 
 export interface CreatePipelinePayload {
-  template: string;
+  projectPath: string;
   requirement: string;
 }

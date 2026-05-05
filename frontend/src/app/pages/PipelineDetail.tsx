@@ -16,6 +16,8 @@ import {
   ChevronDown,
   Copy,
   Check,
+  FolderOpen,
+  FileSearch,
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useApiQuery } from "../hooks/useApiQuery";
@@ -447,6 +449,98 @@ export function PipelineDetail() {
           )}
         </div>
       </div>
+
+      {(pipeline.projectPath || pipeline.projectSummary || pipeline.requirementDocPath) && (
+        <div
+          className="mx-6 mt-5 rounded-2xl p-5 flex-shrink-0"
+          style={{
+            background: "rgba(255,255,255,0.025)",
+            border: "1px solid rgba(255,255,255,0.07)",
+          }}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <FileSearch size={13} style={{ color: "rgba(255,255,255,0.45)" }} />
+            <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>
+              项目上下文
+            </span>
+          </div>
+
+          {pipeline.projectPath && (
+            <div className="mb-4">
+              <div
+                className="flex items-center gap-2 mb-2"
+                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+              >
+                <FolderOpen size={11} />
+                项目本地目录
+              </div>
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: "rgba(0,0,0,0.22)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.72)",
+                  fontSize: 12,
+                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                  wordBreak: "break-all",
+                }}
+              >
+                {pipeline.projectPath}
+              </div>
+            </div>
+          )}
+
+          {pipeline.projectSummary && (
+            <div>
+              <div
+                className="flex items-center gap-2 mb-2"
+                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+              >
+                <Terminal size={11} />
+                目录扫描摘要
+              </div>
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: "rgba(0,0,0,0.22)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.66)",
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {pipeline.projectSummary}
+              </div>
+            </div>
+          )}
+
+          {pipeline.requirementDocPath && (
+            <div className="mt-4">
+              <div
+                className="flex items-center gap-2 mb-2"
+                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+              >
+                <Terminal size={11} />
+                需求文档落盘路径
+              </div>
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: "rgba(0,0,0,0.22)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.72)",
+                  fontSize: 12,
+                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                  wordBreak: "break-all",
+                }}
+              >
+                {pipeline.requirementDocPath}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 overflow-hidden flex gap-0">
         <div

@@ -13,6 +13,7 @@ class HealthResponse(BaseModel):
 
 class CreatePipelineRequest(BaseModel):
     title: str = Field(default="", max_length=200)
+    project_path: str = Field(default="", max_length=1000)
     requirement: str = Field(min_length=1)
 
 
@@ -54,6 +55,14 @@ class FrontendPipeline(BaseModel):
     createdAt: str
     updatedAt: str
     template: str | None = None
+    projectPath: str | None = None
+    projectSummary: str | None = None
+    requirementDocPath: str | None = None
+
+
+class FrontendCreatePipelineRequest(BaseModel):
+    projectPath: str = Field(min_length=1)
+    requirement: str = Field(min_length=1)
 
 
 class FrontendAgent(BaseModel):

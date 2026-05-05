@@ -8,11 +8,9 @@ import {
   ArrowRight,
   X,
   Zap,
-  AlertCircle,
-  TrendingUp,
-  ChevronRight,
   Filter,
   RotateCcw,
+  FolderOpen,
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useApiQuery } from "../hooks/useApiQuery";
@@ -22,22 +20,56 @@ import type { CreatePipelinePayload, Pipeline } from "../types/pipeline";
 
 const stageLabels = ["需求分析", "方案设计", "代码生成", "测试生成", "代码评审", "交付集成"];
 
-const templates = [
-  { id: "feature", label: "新功能开发", desc: "6 阶段完整流程", icon: Zap, color: "#5B72FF" },
-  { id: "bugfix", label: "Bug 修复", desc: "精简 4 阶段", icon: AlertCircle, color: "#FF9F0A" },
-  { id: "refactor", label: "重构优化", desc: "含架构评审", icon: TrendingUp, color: "#A259FF" },
-];
-
 function NewPipelineModal({ onClose }: { onClose: () => void }) {
-  const [step, setStep] = useState<"template" | "input">("template");
-  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [projectPath, setProjectPath] = useState("");
   const [requirement, setRequirement] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [choosingDirectory, setChoosingDirectory] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  const handleChooseDirectory = async () => {
+    if (choosingDirectory) {
+      return;
+    }
+
+    setChoosingDirectory(true);
+    setSubmitError(null);
+
+    try {
+      if (window.api?.chooseDirectory) {
+        const selectedPath = await window.api.chooseDirectory();
+        if (selectedPath) {
+          setProjectPath(selectedPath);
+        }
+        return;
+      }
+
+      const picker = (window as Window & {
+        showDirectoryPicker?: () => Promise<{ name?: string }>;
+      }).showDirectoryPicker;
+
+      if (picker) {
+        await picker();
+        setSubmitError(
+          "浏览器环境无法读取文件夹绝对路径，请手动粘贴项目本地目录，或使用桌面版的“打开文件夹”按钮。"
+        );
+        return;
+      }
+
+      setSubmitError("当前环境不支持目录选择器，请手动输入项目本地目录。");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      setSubmitError("打开目录选择器失败，请重试或手动输入项目本地目录。");
+    } finally {
+      setChoosingDirectory(false);
+    }
+  };
+
   const handleSubmit = async () => {
-    if (!selectedTemplate || !requirement.trim() || submitting) {
+    if (!projectPath.trim() || !requirement.trim() || submitting) {
       return;
     }
 
@@ -45,8 +77,8 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
     setSubmitError(null);
 
     const payload: CreatePipelinePayload = {
+      projectPath: projectPath.trim(),
       requirement: requirement.trim(),
-      template: selectedTemplate,
     };
 
     try {
@@ -87,7 +119,7 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
           <div>
             <h2 style={{ fontSize: 16, fontWeight: 600, color: "white" }}>新建流水线</h2>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>
-              {step === "template" ? "选择流程模板" : "描述你的需求"}
+              输入项目目录与自然语言需求，AI 将直接开始处理
             </p>
           </div>
           <button
@@ -100,85 +132,31 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="p-6">
-          {step === "template" ? (
-            <div className="space-y-3">
-              {templates.map((template) => (
-                <motion.button
-                  key={template.id}
-                  whileHover={{ x: 2 }}
-                  whileTap={{ scale: 0.99 }}
-                  onClick={() => setSelectedTemplate(template.id)}
-                  className="w-full flex items-center gap-4 p-4 rounded-xl transition-all"
-                  style={{
-                    background:
-                      selectedTemplate === template.id
-                        ? `${template.color}12`
-                        : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${
-                      selectedTemplate === template.id
-                        ? `${template.color}35`
-                        : "rgba(255,255,255,0.07)"
-                    }`,
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ background: `${template.color}18` }}
-                  >
-                    <template.icon size={16} style={{ color: template.color }} />
-                  </div>
-                  <div className="flex-1">
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.85)" }}>
-                      {template.label}
-                    </div>
-                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
-                      {template.desc}
-                    </div>
-                  </div>
-                  {selectedTemplate === template.id && (
-                    <div
-                      className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: template.color }}
-                    >
-                      <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
-                        <path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    </div>
-                  )}
-                </motion.button>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: "rgba(255,255,255,0.5)",
-                    display: "block",
-                    marginBottom: 8,
-                  }}
-                >
-                  需求描述
-                </label>
-                <textarea
-                  value={requirement}
-                  onChange={(event) => setRequirement(event.target.value)}
-                  placeholder="用自然语言描述你的需求，AI 将自动拆解为多阶段 Pipeline 任务...
-
-例如：实现一个用户收藏功能，允许用户收藏文章，并提供收藏列表页面，支持分页和排序。"
-                  className="w-full rounded-xl px-4 py-3 resize-none"
-                  rows={6}
+          <div className="space-y-4">
+            <div>
+              <label
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "rgba(255,255,255,0.5)",
+                  display: "block",
+                  marginBottom: 8,
+                }}
+              >
+                项目本地目录
+              </label>
+              <div className="flex gap-2">
+                <input
+                  value={projectPath}
+                  onChange={(event) => setProjectPath(event.target.value)}
+                  placeholder="请输入项目本地绝对路径，例如 /Users/yuki/code/my-project"
+                  className="flex-1 rounded-xl px-4 py-3"
                   style={{
                     background: "rgba(255,255,255,0.04)",
                     border: "1px solid rgba(255,255,255,0.08)",
                     color: "rgba(255,255,255,0.85)",
                     fontSize: 13,
                     outline: "none",
-                    lineHeight: 1.6,
                   }}
                   onFocus={(event) =>
                     (event.target.style.border = "1px solid rgba(91,114,255,0.4)")
@@ -187,112 +165,126 @@ function NewPipelineModal({ onClose }: { onClose: () => void }) {
                     (event.target.style.border = "1px solid rgba(255,255,255,0.08)")
                   }
                 />
-              </div>
-
-              <div
-                className="flex items-start gap-2 p-3 rounded-lg"
-                style={{ background: "rgba(91,114,255,0.06)", border: "1px solid rgba(91,114,255,0.12)" }}
-              >
-                <Zap size={12} style={{ color: "#7C8FFF", marginTop: 1, flexShrink: 0 }} />
-                <p style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
-                  AI 将自动分析需求，通过 <strong style={{ color: "rgba(255,255,255,0.6)" }}>6 个阶段</strong> 逐步完成从需求到代码的全链路自动化。你将在关键检查点参与审批。
-                </p>
-              </div>
-
-              {submitError && (
-                <div
-                  className="rounded-xl px-4 py-3"
+                <button
+                  type="button"
+                  onClick={handleChooseDirectory}
+                  disabled={choosingDirectory}
+                  className="flex items-center gap-2 px-4 rounded-xl"
                   style={{
-                    background: "rgba(255,69,58,0.06)",
-                    border: "1px solid rgba(255,69,58,0.18)",
-                    color: "rgba(255,255,255,0.72)",
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    color: choosingDirectory ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.72)",
+                    cursor: choosingDirectory ? "not-allowed" : "pointer",
                     fontSize: 12,
+                    flexShrink: 0,
                   }}
                 >
-                  {submitError}
-                </div>
-              )}
+                  <FolderOpen size={13} />
+                  {choosingDirectory ? "打开中..." : "打开文件夹"}
+                </button>
+              </div>
             </div>
-          )}
+
+            <div>
+              <label
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: "rgba(255,255,255,0.5)",
+                  display: "block",
+                  marginBottom: 8,
+                }}
+              >
+                自然语言需求
+              </label>
+              <textarea
+                value={requirement}
+                onChange={(event) => setRequirement(event.target.value)}
+                placeholder="用自然语言描述你的需求，AI 将直接结合项目目录进行分析。
+
+例如：在现有项目中实现一个用户收藏功能，允许用户收藏文章，并提供收藏列表页面，支持分页和排序。"
+                className="w-full rounded-xl px-4 py-3 resize-none"
+                rows={6}
+                style={{
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  color: "rgba(255,255,255,0.85)",
+                  fontSize: 13,
+                  outline: "none",
+                  lineHeight: 1.6,
+                }}
+                onFocus={(event) =>
+                  (event.target.style.border = "1px solid rgba(91,114,255,0.4)")
+                }
+                onBlur={(event) =>
+                  (event.target.style.border = "1px solid rgba(255,255,255,0.08)")
+                }
+              />
+            </div>
+
+            <div
+              className="flex items-start gap-2 p-3 rounded-lg"
+              style={{ background: "rgba(91,114,255,0.06)", border: "1px solid rgba(91,114,255,0.12)" }}
+            >
+              <Zap size={12} style={{ color: "#7C8FFF", marginTop: 1, flexShrink: 0 }} />
+              <p style={{ fontSize: 11.5, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>
+                AI 会先读取你提供的项目本地目录，再基于自然语言需求生成 6 阶段 Pipeline，并在关键检查点等待审批。
+              </p>
+            </div>
+
+            {submitError && (
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: "rgba(255,69,58,0.06)",
+                  border: "1px solid rgba(255,69,58,0.18)",
+                  color: "rgba(255,255,255,0.72)",
+                  fontSize: 12,
+                }}
+              >
+                {submitError}
+              </div>
+            )}
+          </div>
         </div>
 
         <div
           className="flex items-center justify-end gap-3 px-6 py-4"
           style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
         >
-          {step === "template" ? (
-            <>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 rounded-lg"
-                style={{
-                  fontSize: 13,
-                  color: "rgba(255,255,255,0.5)",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  cursor: "pointer",
-                }}
-              >
-                取消
-              </button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                disabled={!selectedTemplate}
-                onClick={() => setStep("input")}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg"
-                style={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  background: selectedTemplate
-                    ? "linear-gradient(135deg, #5B72FF, #A259FF)"
-                    : "rgba(255,255,255,0.06)",
-                  color: selectedTemplate ? "white" : "rgba(255,255,255,0.3)",
-                  border: "none",
-                  cursor: selectedTemplate ? "pointer" : "not-allowed",
-                  boxShadow: selectedTemplate ? "0 4px 14px rgba(91,114,255,0.3)" : "none",
-                }}
-              >
-                下一步 <ChevronRight size={13} />
-              </motion.button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setStep("template")}
-                className="px-4 py-2 rounded-lg"
-                style={{
-                  fontSize: 13,
-                  color: "rgba(255,255,255,0.5)",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  cursor: "pointer",
-                }}
-              >
-                上一步
-              </button>
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                disabled={!requirement.trim() || submitting}
-                onClick={handleSubmit}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-lg"
-                style={{
-                  fontSize: 13,
-                  fontWeight: 500,
-                  background: requirement.trim() && !submitting
-                    ? "linear-gradient(135deg, #5B72FF, #A259FF)"
-                    : "rgba(255,255,255,0.06)",
-                  color: requirement.trim() && !submitting ? "white" : "rgba(255,255,255,0.3)",
-                  border: "none",
-                  cursor: requirement.trim() && !submitting ? "pointer" : "not-allowed",
-                  boxShadow: requirement.trim() && !submitting ? "0 4px 14px rgba(91,114,255,0.3)" : "none",
-                }}
-              >
-                <Zap size={13} /> {submitting ? "创建中..." : "启动 Pipeline"}
-              </motion.button>
-            </>
-          )}
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg"
+            style={{
+              fontSize: 13,
+              color: "rgba(255,255,255,0.5)",
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              cursor: "pointer",
+            }}
+          >
+            取消
+          </button>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            disabled={!projectPath.trim() || !requirement.trim() || submitting}
+            onClick={handleSubmit}
+            className="flex items-center gap-1.5 px-5 py-2 rounded-lg"
+            style={{
+              fontSize: 13,
+              fontWeight: 500,
+              background: projectPath.trim() && requirement.trim() && !submitting
+                ? "linear-gradient(135deg, #5B72FF, #A259FF)"
+                : "rgba(255,255,255,0.06)",
+              color: projectPath.trim() && requirement.trim() && !submitting ? "white" : "rgba(255,255,255,0.3)",
+              border: "none",
+              cursor: projectPath.trim() && requirement.trim() && !submitting ? "pointer" : "not-allowed",
+              boxShadow: projectPath.trim() && requirement.trim() && !submitting ? "0 4px 14px rgba(91,114,255,0.3)" : "none",
+            }}
+          >
+            <Zap size={13} /> {submitting ? "创建中..." : "启动 Pipeline"}
+          </motion.button>
         </div>
       </motion.div>
     </motion.div>

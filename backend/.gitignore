@@ -1,3 +1,4 @@
 flow_state/**
 *.pyc
 __pycache__/
+.env.local

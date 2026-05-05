@@ -9,7 +9,7 @@ from src.api.schemas import (
     PipelineListResponse,
     RunPipelineResponse,
 )
-from src.api.service import PipelineService
+from src.api.service import PipelineService, PipelineValidationError
 from src.models.pipeline import Pipeline
 
 router = APIRouter(prefix="/api/v1/pipelines", tags=["pipelines"])
@@ -30,10 +30,14 @@ async def create_pipeline(
     payload: CreatePipelineRequest,
     service: PipelineService = Depends(get_pipeline_service),
 ) -> PipelineEnvelope:
-    pipeline = await service.create_pipeline(
-        title=payload.title,
-        requirement=payload.requirement,
-    )
+    try:
+        pipeline = await service.create_pipeline(
+            title=payload.title,
+            project_path=payload.project_path,
+            requirement=payload.requirement,
+        )
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     return PipelineEnvelope(pipeline=pipeline)
 
 

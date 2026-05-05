@@ -42,9 +42,14 @@ class ApproveAction(str, Enum):
 
 class PipelineContext(BaseModel):
     """贯穿整个 Pipeline 的上下文"""
+    project_path: str = ""
+    project_summary: Optional[str] = None
     requirement_raw: str = ""
     requirement_doc: Optional[str] = None
+    requirement_doc_path: Optional[str] = None
     solution_doc: Optional[str] = None
+    solution_doc_path: Optional[str] = None
+    solution_structured: Optional[Dict[str, Any]] = None
     generated_code: Optional[Dict[str, str]] = None
     test_report: Optional[str] = None
     review_report: Optional[str] = None
@@ -73,6 +78,7 @@ class Pipeline(BaseModel):
     status: PipelineStatus = PipelineStatus.PENDING
     stages: List[StageNode] = []
     context: PipelineContext = PipelineContext()
+    logs: List[str] = []
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     error: Optional[str] = None

@@ -9,3 +9,10 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+interface Window {
+  api?: {
+    ping: () => string;
+    chooseDirectory?: () => Promise<string | null>;
+  };
+}

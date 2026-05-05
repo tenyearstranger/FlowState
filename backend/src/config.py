@@ -177,8 +177,28 @@ class FlowStateConfig:
 _CONFIG_INSTANCE: Optional[FlowStateConfig] = None
 
 
+def _load_local_env_file() -> None:
+    """从 backend/.env.local 加载本地环境变量，不覆盖已存在环境变量。"""
+    backend_root = Path(__file__).resolve().parents[1]
+    env_file = backend_root / ".env.local"
+    if not env_file.exists():
+        return
+
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def _load_from_env() -> FlowStateConfig:
     """从环境变量加载配置覆盖"""
+    _load_local_env_file()
     cfg = FlowStateConfig()
 
     # --- LLM 配置 ---

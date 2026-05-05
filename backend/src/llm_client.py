@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
+import httpx
 from openai import OpenAI
 
 from src.config import get_config, LLMProvider
@@ -145,6 +148,16 @@ class LLMClient:
             or DEFAULT_BASE_URLS.get(self.provider, "")
         )
 
+    _DIRECT_CONNECT_DOMAINS = {
+        "api.deepseek.com",
+    }
+
+    def _needs_direct_connect(self) -> bool:
+        if not self.base_url:
+            return False
+        host = urlparse(self.base_url).hostname or ""
+        return host in self._DIRECT_CONNECT_DOMAINS
+
     def _get_client(self) -> OpenAI:
         """获取（或创建） OpenAI 客户端"""
         if self._client is None:
@@ -157,6 +170,8 @@ class LLMClient:
                     "HTTP-Referer": "https://flowstate.dev",
                     "X-Title": "FlowState",
                 }
+            if self._needs_direct_connect():
+                kwargs["http_client"] = httpx.Client(proxy=None)
             self._client = OpenAI(**kwargs)
         return self._client
 

@@ -9,9 +9,7 @@ import {
   ArrowRight,
   Plus,
   Clock,
-  TrendingUp,
   Zap,
-  AlertCircle,
   RotateCcw,
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
@@ -30,18 +28,6 @@ const templates = [
     desc: "完整的 6 阶段开发流程",
     icon: Zap,
     color: "#5B72FF",
-  },
-  {
-    title: "Bug 修复",
-    desc: "精简的 4 阶段修复流程",
-    icon: AlertCircle,
-    color: "#FF9F0A",
-  },
-  {
-    title: "重构优化",
-    desc: "含架构评审的重构流程",
-    icon: TrendingUp,
-    color: "#A259FF",
   },
 ];
 
@@ -439,7 +425,7 @@ export function Dashboard() {
           }}
         >
           <div className="flex items-center gap-2 mb-4">
-            <TrendingUp size={13} style={{ color: "rgba(255,255,255,0.4)" }} />
+            <Zap size={13} style={{ color: "rgba(255,255,255,0.4)" }} />
             <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>
               Pipeline 模板
             </span>

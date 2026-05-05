@@ -232,8 +232,10 @@ class DevFlowEngine:
             if result_key in result:
                 setattr(pipeline.context, ctx_field, result[result_key])
             elif agent_output and agent_output.details:
-                # Fallback: 使用 Agent 的 details 字段
                 setattr(pipeline.context, ctx_field, agent_output.details)
+
+        if stage == StageType.SOLUTION and "structured_solution" in result:
+            pipeline.context.solution_structured = result["structured_solution"]
 
         pipeline.updated_at = datetime.now()
 

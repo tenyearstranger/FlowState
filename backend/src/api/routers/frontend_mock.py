@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from datetime import datetime
+from datetime import timezone
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
+from src.api.deps import get_pipeline_service
 from src.api.schemas import (
     FrontendActivityItem,
     FrontendAgent,
     FrontendAnalyticsOverview,
     FrontendCheckpoint,
+    FrontendCreatePipelineRequest,
     FrontendPipeline,
     FrontendPipelineStage,
 )
+from src.api.service import PipelineService, PipelineValidationError
+from src.models.pipeline import Pipeline, PipelineStatus, StageStatus, StageType
 
 router = APIRouter(prefix="/api", tags=["frontend-mock"])
+
+
+class RejectCheckpointRequest(BaseModel):
+    reason: str
 
 
 def _stage(
@@ -406,20 +417,278 @@ def _get_pipeline_or_404(pipeline_id: str) -> FrontendPipeline:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
 
 
+def _find_static_pipeline(pipeline_id: str) -> FrontendPipeline | None:
+    for pipeline in PIPELINES:
+        if pipeline.id == pipeline_id:
+            return pipeline
+    return None
+
+
+def _stage_type_label(stage_type: StageType) -> tuple[str, str]:
+    labels = {
+        StageType.REQUIREMENT: ("需求分析", "Requirements Analysis"),
+        StageType.SOLUTION: ("方案设计", "Design"),
+        StageType.CODING: ("代码生成", "Code Generation"),
+        StageType.TESTING: ("测试生成", "Test Generation"),
+        StageType.REVIEW: ("代码评审", "Code Review"),
+        StageType.DELIVERY: ("交付集成", "Delivery"),
+    }
+    return labels[stage_type]
+
+
+def _stage_agent_name(stage_type: StageType) -> str:
+    mapping = {
+        StageType.REQUIREMENT: "RequirementsAgent",
+        StageType.SOLUTION: "ArchitectAgent",
+        StageType.CODING: "CodegenAgent",
+        StageType.TESTING: "TestAgent",
+        StageType.REVIEW: "ReviewAgent",
+        StageType.DELIVERY: "DeliveryAgent",
+    }
+    return mapping[stage_type]
+
+
+def _frontend_stage_status(stage_status: StageStatus) -> str:
+    mapping = {
+        StageStatus.PENDING: "idle",
+        StageStatus.RUNNING: "running",
+        StageStatus.WAITING_HUMAN: "awaiting_review",
+        StageStatus.APPROVED: "completed",
+        StageStatus.REJECTED: "rejected",
+        StageStatus.COMPLETED: "completed",
+        StageStatus.FAILED: "failed",
+    }
+    return mapping[stage_status]
+
+
+def _frontend_pipeline_status(pipeline_status: PipelineStatus) -> str:
+    mapping = {
+        PipelineStatus.PENDING: "pending",
+        PipelineStatus.RUNNING: "running",
+        PipelineStatus.WAITING_HUMAN: "paused",
+        PipelineStatus.COMPLETED: "completed",
+        PipelineStatus.FAILED: "failed",
+        PipelineStatus.CANCELLED: "failed",
+    }
+    return mapping[pipeline_status]
+
+
+def _serialize_datetime(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def _extract_stage_output(pipeline: Pipeline, stage_type: StageType, agent_output: dict | None) -> str | None:
+    if agent_output:
+        for key in ("text", "document", "design", "report", "result", "summary"):
+            value = agent_output.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    context_fallback = {
+        StageType.REQUIREMENT: pipeline.context.requirement_doc,
+        StageType.SOLUTION: pipeline.context.solution_doc,
+        StageType.TESTING: pipeline.context.test_report,
+        StageType.REVIEW: pipeline.context.review_report,
+        StageType.DELIVERY: pipeline.context.delivery_result,
+    }
+    if stage_type == StageType.CODING and pipeline.context.generated_code:
+        return "\n".join(
+            f"{path}\n{content}" for path, content in pipeline.context.generated_code.items()
+        )
+    return context_fallback.get(stage_type)
+
+
+def _calculate_progress(pipeline: Pipeline) -> int:
+    if not pipeline.stages:
+        return 0
+    completed = sum(
+        1 for stage in pipeline.stages
+        if stage.status in {StageStatus.COMPLETED, StageStatus.APPROVED, StageStatus.WAITING_HUMAN}
+    )
+    if pipeline.status == PipelineStatus.RUNNING:
+        running_bonus = 8 if any(stage.status == StageStatus.RUNNING for stage in pipeline.stages) else 0
+        return min(99, round((completed / len(pipeline.stages)) * 100) + running_bonus)
+    return round((completed / len(pipeline.stages)) * 100)
+
+
+def _current_stage_index(pipeline: Pipeline) -> int:
+    for index, stage in enumerate(pipeline.stages):
+        if stage.status not in {StageStatus.COMPLETED, StageStatus.APPROVED}:
+            return index
+    return max(len(pipeline.stages) - 1, 0)
+
+
+def _to_frontend_pipeline(pipeline: Pipeline) -> FrontendPipeline:
+    stages = []
+    for index, stage in enumerate(pipeline.stages):
+        name, name_en = _stage_type_label(stage.stage_type)
+        stages.append(
+            FrontendPipelineStage(
+                id=f"{pipeline.id}-stage-{index + 1}",
+                name=name,
+                nameEn=name_en,
+                agent=_stage_agent_name(stage.stage_type),
+                status=_frontend_stage_status(stage.status),
+                output=_extract_stage_output(pipeline, stage.stage_type, stage.agent_output),
+                isCheckpoint=stage.stage_type in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW},
+                startedAt=_serialize_datetime(stage.started_at),
+                completedAt=_serialize_datetime(stage.completed_at),
+            )
+        )
+
+    return FrontendPipeline(
+        id=pipeline.id,
+        name=pipeline.title or pipeline.context.requirement_raw[:60],
+        description=pipeline.context.requirement_raw,
+        status=_frontend_pipeline_status(pipeline.status),
+        progress=_calculate_progress(pipeline),
+        currentStage=_current_stage_index(pipeline),
+        stages=stages,
+        createdAt=_serialize_datetime(pipeline.created_at) or "",
+        updatedAt=_serialize_datetime(pipeline.updated_at) or "",
+        template="新功能开发",
+        projectPath=pipeline.context.project_path or None,
+        projectSummary=pipeline.context.project_summary,
+        requirementDocPath=pipeline.context.requirement_doc_path,
+    )
+
+
+def _to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> FrontendCheckpoint | None:
+    stage_node = pipeline.stages[index]
+    if stage_node.status not in {
+        StageStatus.WAITING_HUMAN,
+        StageStatus.APPROVED,
+        StageStatus.REJECTED,
+    }:
+        return None
+
+    stage_name, _ = _stage_type_label(stage)
+    created_at = (
+        _serialize_datetime(stage_node.completed_at)
+        or _serialize_datetime(stage_node.started_at)
+        or _serialize_datetime(pipeline.updated_at)
+        or _serialize_datetime(pipeline.created_at)
+        or datetime.now(timezone.utc).isoformat()
+    )
+    return FrontendCheckpoint(
+        id=_build_checkpoint_id(pipeline.id, stage),
+        pipelineId=pipeline.id,
+        pipelineName=pipeline.title or pipeline.context.requirement_raw[:60],
+        stage=stage_name,
+        stageIndex=index,
+        status=(
+            "pending"
+            if stage_node.status == StageStatus.WAITING_HUMAN
+            else "approved"
+            if stage_node.status == StageStatus.APPROVED
+            else "rejected"
+        ),
+        createdAt=created_at,
+        output=_extract_stage_output(pipeline, stage, stage_node.agent_output) or "",
+        rejectReason=stage_node.human_feedback,
+    )
+
+
+async def _list_persisted_checkpoints(service: PipelineService) -> list[FrontendCheckpoint]:
+    checkpoints: list[FrontendCheckpoint] = []
+    for pipeline in await service.list_pipelines():
+        for index, stage_node in enumerate(pipeline.stages):
+            if stage_node.stage_type not in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW}:
+                continue
+            checkpoint = _to_frontend_checkpoint(pipeline, stage_node.stage_type, index)
+            if checkpoint is not None:
+                checkpoints.append(checkpoint)
+    checkpoints.sort(key=lambda item: item.createdAt, reverse=True)
+    return checkpoints
+
+
+def _build_checkpoint_id(pipeline_id: str, stage: StageType) -> str:
+    return f"cp-{pipeline_id}-{stage.value}"
+
+
+async def _find_persisted_checkpoint(
+    checkpoint_id: str,
+    service: PipelineService,
+) -> tuple[Pipeline, int, FrontendCheckpoint] | None:
+    for pipeline in await service.list_pipelines():
+        for index, stage_node in enumerate(pipeline.stages):
+            if stage_node.stage_type not in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW}:
+                continue
+            if _build_checkpoint_id(pipeline.id, stage_node.stage_type) != checkpoint_id:
+                continue
+            checkpoint = _to_frontend_checkpoint(pipeline, stage_node.stage_type, index)
+            if checkpoint is None:
+                return None
+            return pipeline, index, checkpoint
+    return None
+
+
 @router.get("/pipelines", response_model=list[FrontendPipeline])
-async def list_pipelines() -> list[FrontendPipeline]:
-    return PIPELINES
+async def list_pipelines(
+    service: PipelineService = Depends(get_pipeline_service),
+) -> list[FrontendPipeline]:
+    persisted = [_to_frontend_pipeline(item) for item in await service.list_pipelines()]
+    return persisted + PIPELINES
+
+
+@router.post("/pipelines", response_model=FrontendPipeline, status_code=status.HTTP_201_CREATED)
+async def create_pipeline(
+    payload: FrontendCreatePipelineRequest,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> FrontendPipeline:
+    try:
+        pipeline = await service.create_pipeline(
+            title="",
+            requirement=payload.requirement,
+            project_path=payload.projectPath,
+            start_immediately=True,
+        )
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    ACTIVITIES.insert(
+        0,
+        FrontendActivityItem(
+            time="刚刚",
+            text=(
+                f"{pipeline.id} · 需求分析已完成，"
+                f"{'等待人工审批' if pipeline.status == PipelineStatus.WAITING_HUMAN else '进入下一阶段'}"
+            ),
+            type="checkpoint" if pipeline.status == PipelineStatus.WAITING_HUMAN else "success",
+        ),
+    )
+    del ACTIVITIES[20:]
+    return _to_frontend_pipeline(pipeline)
 
 
 @router.get("/pipelines/{pipeline_id}", response_model=FrontendPipeline)
-async def get_pipeline(pipeline_id: str) -> FrontendPipeline:
-    return _get_pipeline_or_404(pipeline_id)
+async def get_pipeline(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> FrontendPipeline:
+    static_pipeline = _find_static_pipeline(pipeline_id)
+    if static_pipeline is not None:
+        return static_pipeline
+
+    pipeline = await service.get_pipeline(pipeline_id)
+    if pipeline is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+    return _to_frontend_pipeline(pipeline)
 
 
 @router.get("/pipelines/{pipeline_id}/logs", response_model=list[str])
-async def get_pipeline_logs(pipeline_id: str) -> list[str]:
-    _get_pipeline_or_404(pipeline_id)
-    return PIPELINE_LOGS.get(pipeline_id, [])
+async def get_pipeline_logs(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> list[str]:
+    static_pipeline = _find_static_pipeline(pipeline_id)
+    if static_pipeline is not None:
+        return PIPELINE_LOGS.get(pipeline_id, [])
+
+    pipeline = await service.get_pipeline(pipeline_id)
+    if pipeline is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+    return pipeline.logs
 
 
 @router.get("/agents", response_model=list[FrontendAgent])
@@ -430,10 +699,78 @@ async def list_agents() -> list[FrontendAgent]:
 @router.get("/checkpoints", response_model=list[FrontendCheckpoint])
 async def list_checkpoints(
     status_value: str = Query(default="all", alias="status"),
+    service: PipelineService = Depends(get_pipeline_service),
 ) -> list[FrontendCheckpoint]:
+    persisted = await _list_persisted_checkpoints(service)
     if status_value == "all":
-        return CHECKPOINTS
-    return [checkpoint for checkpoint in CHECKPOINTS if checkpoint.status == status_value]
+        return persisted + CHECKPOINTS
+    return [
+        checkpoint for checkpoint in (persisted + CHECKPOINTS)
+        if checkpoint.status == status_value
+    ]
+
+
+@router.post("/checkpoints/{checkpoint_id}/approve", response_model=FrontendCheckpoint)
+async def approve_checkpoint(
+    checkpoint_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> FrontendCheckpoint:
+    persisted = await _find_persisted_checkpoint(checkpoint_id, service)
+    if persisted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found")
+
+    pipeline, stage_index, current_checkpoint = persisted
+    if current_checkpoint.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
+
+    updated_pipeline = await service.approve_stage(pipeline.id, stage_index)
+    stage_type = updated_pipeline.stages[stage_index].stage_type
+    updated_checkpoint = _to_frontend_checkpoint(updated_pipeline, stage_type, stage_index)
+    if updated_checkpoint is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkpoint update failed")
+
+    ACTIVITIES.insert(
+        0,
+        FrontendActivityItem(
+            time="刚刚",
+            text=f"{updated_pipeline.id} · {updated_checkpoint.stage} 检查点审批已通过",
+            type="success",
+        ),
+    )
+    del ACTIVITIES[20:]
+    return updated_checkpoint
+
+
+@router.post("/checkpoints/{checkpoint_id}/reject", response_model=FrontendCheckpoint)
+async def reject_checkpoint(
+    checkpoint_id: str,
+    payload: RejectCheckpointRequest,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> FrontendCheckpoint:
+    persisted = await _find_persisted_checkpoint(checkpoint_id, service)
+    if persisted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found")
+
+    pipeline, stage_index, current_checkpoint = persisted
+    if current_checkpoint.status != "pending":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
+
+    updated_pipeline = await service.reject_stage(pipeline.id, stage_index, payload.reason)
+    stage_type = updated_pipeline.stages[stage_index].stage_type
+    updated_checkpoint = _to_frontend_checkpoint(updated_pipeline, stage_type, stage_index)
+    if updated_checkpoint is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkpoint update failed")
+
+    ACTIVITIES.insert(
+        0,
+        FrontendActivityItem(
+            time="刚刚",
+            text=f"{updated_pipeline.id} · {updated_checkpoint.stage} 检查点被拒绝，等待重新处理",
+            type="warning",
+        ),
+    )
+    del ACTIVITIES[20:]
+    return updated_checkpoint
 
 
 @router.get("/analytics", response_model=FrontendAnalyticsOverview)
