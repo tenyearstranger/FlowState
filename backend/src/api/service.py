@@ -8,8 +8,11 @@ from pathlib import Path
 
 from src.agents.base_agent import AgentInput
 from src.agents.code_agent import CodeAgent
+from src.agents.delivery_agent import DeliveryAgent
 from src.agents.requirement_agent import RequirementAgent
+from src.agents.review_agent import ReviewAgent
 from src.agents.solution_agent import SolutionAgent
+from src.agents.test_agent import TestAgent
 from src.models.pipeline import (
     ApproveAction,
     Pipeline,
@@ -258,6 +261,19 @@ class PipelineService:
         elif stage.stage_type == StageType.SOLUTION:
             pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.CODING.value}")
             await self._run_code_generation(pipeline)
+        elif stage.stage_type == StageType.CODING:
+            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.TESTING.value}")
+            await self._run_testing(pipeline)
+        elif stage.stage_type == StageType.TESTING:
+            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.REVIEW.value}")
+            await self._run_review(pipeline)
+        elif stage.stage_type == StageType.REVIEW:
+            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.DELIVERY.value}")
+            await self._run_delivery(pipeline)
+        elif stage.stage_type == StageType.DELIVERY:
+            pipeline.status = PipelineStatus.COMPLETED
+            pipeline.logs.append(f"[{_timestamp()}] 所有阶段已完成")
+            await self.state_store.save(pipeline)
         else:
             next_stage = pipeline.stages[stage_index + 1] if stage_index + 1 < len(pipeline.stages) else None
             if next_stage is not None:
@@ -484,11 +500,234 @@ class PipelineService:
                 preview = "、".join(Path(path).name for path in written_files[:5])
                 pipeline.logs.append(f"[{_timestamp()}] 生成代码已写入: {preview}")
             await self.state_store.save(pipeline)
+            await self._run_testing(pipeline)
         except Exception as error:
             coding_stage.status = StageStatus.FAILED
             coding_stage.completed_at = datetime.now()
             pipeline.status = PipelineStatus.FAILED
             pipeline.error = f"[coding] {error}"
             pipeline.logs.append(f"[{_timestamp()}] 代码生成失败: {error}")
+            await self.state_store.save(pipeline)
+            raise
+
+    async def _run_testing(self, pipeline: Pipeline) -> None:
+        if len(pipeline.stages) < 4:
+            return
+
+        testing_stage = pipeline.stages[3]
+        now = datetime.now()
+        testing_stage.status = StageStatus.RUNNING
+        testing_stage.started_at = now
+        testing_stage.agent_output = {
+            "text": (
+                "## 正在生成与整理测试结果\n\n"
+                "代码生成已完成，正在根据变更文件生成测试并汇总测试报告。"
+            )
+        }
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = now
+        pipeline.logs.append(f"[{_timestamp()}] TestAgent 正在生成测试报告...")
+
+        try:
+            if self.engine is not None and StageType.TESTING in getattr(self.engine, "agents", {}):
+                agent = self.engine.agents[StageType.TESTING]
+            else:
+                agent = TestAgent()
+
+            input_data = AgentInput(
+                task_description="执行阶段: testing",
+                context=pipeline.context.model_dump(),
+                human_feedback=testing_stage.human_feedback,
+            )
+            output = await agent.execute(input_data)
+            now = datetime.now()
+            testing_stage.agent_output = output.result
+            testing_stage.status = (
+                StageStatus.WAITING_HUMAN
+                if output.needs_human_review or not output.success
+                else StageStatus.COMPLETED
+            )
+            testing_stage.completed_at = now
+
+            test_report = output.result.get("report") or output.details
+            if isinstance(test_report, str) and test_report.strip():
+                pipeline.context.test_report = test_report
+                report_path = _write_project_doc(
+                    pipeline.context.project_path,
+                    "test_report.md",
+                    test_report,
+                )
+                pipeline.logs.append(f"[{_timestamp()}] 测试报告已写入: {report_path}")
+
+            test_files = output.result.get("test_files")
+            if isinstance(test_files, dict):
+                written_tests = _write_generated_code(
+                    pipeline.context.project_path,
+                    test_files,
+                )
+            else:
+                written_tests = []
+
+            pipeline.updated_at = now
+            pipeline.status = (
+                PipelineStatus.WAITING_HUMAN
+                if output.needs_human_review or not output.success
+                else PipelineStatus.PENDING
+            )
+            pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            if written_tests:
+                preview = "、".join(Path(path).name for path in written_tests[:5])
+                pipeline.logs.append(f"[{_timestamp()}] 生成测试文件已写入: {preview}")
+            if output.needs_human_review:
+                pipeline.logs.append(f"[{_timestamp()}] 测试阶段进入人工确认，等待审批")
+            await self.state_store.save(pipeline)
+            if testing_stage.status == StageStatus.COMPLETED:
+                await self._run_review(pipeline)
+        except Exception as error:
+            testing_stage.status = StageStatus.FAILED
+            testing_stage.completed_at = datetime.now()
+            pipeline.status = PipelineStatus.FAILED
+            pipeline.error = f"[testing] {error}"
+            pipeline.logs.append(f"[{_timestamp()}] 测试阶段失败: {error}")
+            await self.state_store.save(pipeline)
+            raise
+
+    async def _run_review(self, pipeline: Pipeline) -> None:
+        if len(pipeline.stages) < 5:
+            return
+
+        review_stage = pipeline.stages[4]
+        now = datetime.now()
+        review_stage.status = StageStatus.RUNNING
+        review_stage.started_at = now
+        review_stage.agent_output = {
+            "text": (
+                "## 正在生成代码评审结论\n\n"
+                "测试阶段已完成，正在基于代码与测试报告生成评审意见。"
+            )
+        }
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = now
+        pipeline.logs.append(f"[{_timestamp()}] ReviewAgent 正在生成评审报告...")
+
+        try:
+            if self.engine is not None and StageType.REVIEW in getattr(self.engine, "agents", {}):
+                agent = self.engine.agents[StageType.REVIEW]
+            else:
+                agent = ReviewAgent()
+
+            input_data = AgentInput(
+                task_description="执行阶段: code_review",
+                context=pipeline.context.model_dump(),
+                human_feedback=review_stage.human_feedback,
+            )
+            output = await agent.execute(input_data)
+            now = datetime.now()
+            review_stage.agent_output = output.result
+            review_stage.status = (
+                StageStatus.WAITING_HUMAN
+                if output.needs_human_review
+                else StageStatus.COMPLETED
+            )
+            review_stage.completed_at = now
+
+            review_report = output.result.get("report") or output.details
+            if isinstance(review_report, str) and review_report.strip():
+                pipeline.context.review_report = review_report
+                review_path = _write_project_doc(
+                    pipeline.context.project_path,
+                    "review_report.md",
+                    review_report,
+                )
+                pipeline.logs.append(f"[{_timestamp()}] 评审报告已写入: {review_path}")
+
+            pipeline.updated_at = now
+            pipeline.status = (
+                PipelineStatus.WAITING_HUMAN
+                if output.needs_human_review
+                else PipelineStatus.PENDING
+            )
+            pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            if output.needs_human_review:
+                pipeline.logs.append(f"[{_timestamp()}] 代码评审进入人工确认，等待审批")
+            await self.state_store.save(pipeline)
+            if not output.needs_human_review:
+                await self._run_delivery(pipeline)
+        except Exception as error:
+            review_stage.status = StageStatus.FAILED
+            review_stage.completed_at = datetime.now()
+            pipeline.status = PipelineStatus.FAILED
+            pipeline.error = f"[code_review] {error}"
+            pipeline.logs.append(f"[{_timestamp()}] 代码评审失败: {error}")
+            await self.state_store.save(pipeline)
+            raise
+
+    async def _run_delivery(self, pipeline: Pipeline) -> None:
+        if len(pipeline.stages) < 6:
+            return
+
+        delivery_stage = pipeline.stages[5]
+        now = datetime.now()
+        delivery_stage.status = StageStatus.RUNNING
+        delivery_stage.started_at = now
+        delivery_stage.agent_output = {
+            "text": (
+                "## 正在整理交付结果\n\n"
+                "评审阶段已通过，正在生成交付清单与部署建议。"
+            )
+        }
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = now
+        pipeline.logs.append(f"[{_timestamp()}] DeliveryAgent 正在生成交付结果...")
+
+        try:
+            if self.engine is not None and StageType.DELIVERY in getattr(self.engine, "agents", {}):
+                agent = self.engine.agents[StageType.DELIVERY]
+            else:
+                agent = DeliveryAgent()
+
+            input_data = AgentInput(
+                task_description="执行阶段: delivery",
+                context=pipeline.context.model_dump(),
+                human_feedback=delivery_stage.human_feedback,
+            )
+            output = await agent.execute(input_data)
+            now = datetime.now()
+            delivery_stage.agent_output = output.result
+            delivery_stage.status = (
+                StageStatus.WAITING_HUMAN
+                if output.needs_human_review
+                else StageStatus.COMPLETED
+            )
+            delivery_stage.completed_at = now
+
+            delivery_result = output.result.get("result") or output.details
+            if isinstance(delivery_result, str) and delivery_result.strip():
+                pipeline.context.delivery_result = delivery_result
+                delivery_path = _write_project_doc(
+                    pipeline.context.project_path,
+                    "delivery.md",
+                    delivery_result,
+                )
+                pipeline.logs.append(f"[{_timestamp()}] 交付文档已写入: {delivery_path}")
+
+            pipeline.updated_at = now
+            pipeline.status = (
+                PipelineStatus.WAITING_HUMAN
+                if output.needs_human_review
+                else PipelineStatus.COMPLETED
+            )
+            pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            if output.needs_human_review:
+                pipeline.logs.append(f"[{_timestamp()}] 交付阶段进入人工确认，等待审批")
+            else:
+                pipeline.logs.append(f"[{_timestamp()}] 所有阶段已完成")
+            await self.state_store.save(pipeline)
+        except Exception as error:
+            delivery_stage.status = StageStatus.FAILED
+            delivery_stage.completed_at = datetime.now()
+            pipeline.status = PipelineStatus.FAILED
+            pipeline.error = f"[delivery] {error}"
+            pipeline.logs.append(f"[{_timestamp()}] 交付阶段失败: {error}")
             await self.state_store.save(pipeline)
             raise

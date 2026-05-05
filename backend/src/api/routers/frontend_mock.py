@@ -22,6 +22,14 @@ from src.models.pipeline import Pipeline, PipelineStatus, StageStatus, StageType
 
 router = APIRouter(prefix="/api", tags=["frontend-mock"])
 
+CHECKPOINT_STAGE_TYPES = {
+    StageType.REQUIREMENT,
+    StageType.SOLUTION,
+    StageType.TESTING,
+    StageType.REVIEW,
+    StageType.DELIVERY,
+}
+
 
 class RejectCheckpointRequest(BaseModel):
     reason: str
@@ -531,7 +539,7 @@ def _to_frontend_pipeline(pipeline: Pipeline) -> FrontendPipeline:
                 agent=_stage_agent_name(stage.stage_type),
                 status=_frontend_stage_status(stage.status),
                 output=_extract_stage_output(pipeline, stage.stage_type, stage.agent_output),
-                isCheckpoint=stage.stage_type in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW},
+                isCheckpoint=stage.stage_type in CHECKPOINT_STAGE_TYPES,
                 startedAt=_serialize_datetime(stage.started_at),
                 completedAt=_serialize_datetime(stage.completed_at),
             )
@@ -594,7 +602,7 @@ async def _list_persisted_checkpoints(service: PipelineService) -> list[Frontend
     checkpoints: list[FrontendCheckpoint] = []
     for pipeline in await service.list_pipelines():
         for index, stage_node in enumerate(pipeline.stages):
-            if stage_node.stage_type not in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW}:
+            if stage_node.stage_type not in CHECKPOINT_STAGE_TYPES:
                 continue
             checkpoint = _to_frontend_checkpoint(pipeline, stage_node.stage_type, index)
             if checkpoint is not None:
@@ -613,7 +621,7 @@ async def _find_persisted_checkpoint(
 ) -> tuple[Pipeline, int, FrontendCheckpoint] | None:
     for pipeline in await service.list_pipelines():
         for index, stage_node in enumerate(pipeline.stages):
-            if stage_node.stage_type not in {StageType.REQUIREMENT, StageType.SOLUTION, StageType.REVIEW}:
+            if stage_node.stage_type not in CHECKPOINT_STAGE_TYPES:
                 continue
             if _build_checkpoint_id(pipeline.id, stage_node.stage_type) != checkpoint_id:
                 continue

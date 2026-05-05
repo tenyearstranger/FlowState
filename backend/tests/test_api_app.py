@@ -195,11 +195,117 @@ class FakeCodeAgent:
         )
 
 
+class FakeTestAgent:
+    async def execute(self, input_data):
+        generated_code = input_data.context.get("generated_code", {})
+        assert "app/main.py" in generated_code
+        return AgentOutput(
+            success=True,
+            result={
+                "test_files": {
+                    "tests/test_app.py": (
+                        "from fastapi.testclient import TestClient\n"
+                        "from app.main import app\n\n"
+                        "def test_health():\n"
+                        "    client = TestClient(app)\n"
+                        "    response = client.get('/')\n"
+                        "    assert response.status_code in {200, 404}\n"
+                    )
+                },
+                "test_results": {"total": 1, "passed": 1, "failed": 0, "coverage": 85},
+                "report": "## 测试报告\n\n- 总计: 1 项测试\n- 通过: 1 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 85%",
+                "pass_rate": "1/1",
+            },
+            summary="测试完成：1/1 通过",
+            details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 1 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 85%",
+            needs_human_review=False,
+        )
+
+
+class FakeFailingTestAgent:
+    async def execute(self, input_data):
+        generated_code = input_data.context.get("generated_code", {})
+        assert "app/main.py" in generated_code
+        return AgentOutput(
+            success=False,
+            result={
+                "test_files": {
+                    "tests/test_app.py": (
+                        "def test_health():\n"
+                        "    assert False, 'health endpoint missing'\n"
+                    )
+                },
+                "test_results": {
+                    "total": 1,
+                    "passed": 0,
+                    "failed": 1,
+                    "coverage": 40,
+                    "errors": ["health endpoint missing"],
+                },
+                "report": "## 测试报告\n\n- 总计: 1 项测试\n- 通过: 0 ✅\n- 失败: 1 ❌\n- 代码覆盖率: 40%\n\n### 错误详情\n- health endpoint missing",
+                "pass_rate": "0/1",
+            },
+            summary="测试完成：0/1 通过",
+            details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 0 ✅\n- 失败: 1 ❌\n- 代码覆盖率: 40%",
+            needs_human_review=True,
+        )
+
+
+class FakeReviewAgent:
+    async def execute(self, input_data):
+        test_report = input_data.context.get("test_report", "")
+        assert "测试报告" in test_report
+        return AgentOutput(
+            success=True,
+            result={
+                "review": {
+                    "score": 92,
+                    "summary": "整体实现清晰，建议补充边界测试。",
+                    "strengths": ["结构清晰", "接口定义明确"],
+                    "issues": [],
+                    "suggestions": ["补充异常路径断言"],
+                },
+                "report": "## 代码评审报告\n\n**评分: 92/100**\n\n- 建议补充异常路径断言",
+                "issues": [],
+                "score": 92,
+            },
+            summary="评审完成：评分 92/100，发现 0 个问题",
+            details="## 代码评审报告\n\n**评分: 92/100**\n\n- 建议补充异常路径断言",
+            needs_human_review=True,
+        )
+
+
+class FakeDeliveryAgent:
+    async def execute(self, input_data):
+        review_report = input_data.context.get("review_report", "")
+        assert "代码评审报告" in review_report
+        return AgentOutput(
+            success=True,
+            result={
+                "pr_title": "feat: 完成自律应用核心链路",
+                "pr_description": "包含需求、方案、代码、测试与评审结果。",
+                "branch": "feature/self-discipline-app",
+                "commit_message": "feat: deliver self-discipline app pipeline output",
+                "deployment_command": "docker compose up -d",
+                "changes": 3,
+                "files_changed": ["app/main.py", "requirements.txt", "tests/test_app.py"],
+                "pr_number": 88,
+                "result": "## 📦 交付汇总\n\n**PR 编号:** #88\n**标题:** feat: 完成自律应用核心链路",
+            },
+            summary="交付就绪：生成 PR #88，变更 3 个文件",
+            details="## 📦 交付汇总\n\n**PR 编号:** #88\n**标题:** feat: 完成自律应用核心链路",
+            needs_human_review=True,
+        )
+
+
 def create_test_client(tmp_path):
     engine = create_engine(StateStore(storage_dir=str(tmp_path)))
     engine.agents[StageType.REQUIREMENT] = FakeRequirementAgent()
     engine.agents[StageType.SOLUTION] = FakeSolutionAgent()
     engine.agents[StageType.CODING] = FakeCodeAgent()
+    engine.agents[StageType.TESTING] = FakeTestAgent()
+    engine.agents[StageType.REVIEW] = FakeReviewAgent()
+    engine.agents[StageType.DELIVERY] = FakeDeliveryAgent()
     app = create_app(engine=engine)
     return TestClient(app), engine
 
@@ -460,18 +566,149 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         approve_solution_response = client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert approve_solution_response.status_code == 200
     assert approve_solution_response.json()["status"] == "approved"
 
     assert detail_response.status_code == 200
     updated_pipeline = detail_response.json()
-    assert updated_pipeline["status"] == "pending"
+    assert updated_pipeline["status"] == "paused"
     assert updated_pipeline["stages"][1]["status"] == "completed"
     assert updated_pipeline["stages"][2]["status"] == "completed"
+    assert updated_pipeline["stages"][3]["status"] == "completed"
+    assert updated_pipeline["stages"][4]["status"] == "awaiting_review"
     assert "FastAPI()" in (updated_pipeline["stages"][2]["output"] or "")
+    assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
+    assert "代码评审报告" in (updated_pipeline["stages"][4]["output"] or "")
     assert (project_dir / "app" / "main.py").exists()
     assert (project_dir / "requirements.txt").exists()
+    assert (project_dir / "tests" / "test_app.py").exists()
+    assert (project_dir / "main" / "test_report.md").exists()
+    assert (project_dir / "main" / "review_report.md").exists()
+    assert any(
+        item["pipelineId"] == created_pipeline["id"] and item["stage"] == "代码评审"
+        for item in checkpoints_response.json()
+    )
+
+
+def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
+    client, engine = create_test_client(tmp_path)
+    engine.agents[StageType.TESTING] = FakeFailingTestAgent()
+    project_dir = tmp_path / "failing-test-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用并补齐测试。",
+            },
+        )
+        created_pipeline = create_response.json()
+
+        requirement_checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
+
+        solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
+        client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+
+        detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
+
+    assert detail_response.status_code == 200
+    updated_pipeline = detail_response.json()
+    assert updated_pipeline["status"] == "paused"
+    assert updated_pipeline["stages"][2]["status"] == "completed"
+    assert updated_pipeline["stages"][3]["status"] == "awaiting_review"
+    assert updated_pipeline["stages"][4]["status"] == "idle"
+    assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
+    assert (project_dir / "tests" / "test_app.py").exists()
+    assert (project_dir / "main" / "test_report.md").exists()
+    assert any(
+        item["pipelineId"] == created_pipeline["id"] and item["stage"] == "测试生成"
+        for item in checkpoints_response.json()
+    )
+
+
+def test_approve_review_checkpoint_moves_delivery_to_waiting_review(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "delivery-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用并完成交付。",
+            },
+        )
+        created_pipeline = create_response.json()
+
+        requirement_checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
+
+        solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
+        client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+
+        review_checkpoint_id = f"cp-{created_pipeline['id']}-code_review"
+        approve_review_response = client.post(f"/api/checkpoints/{review_checkpoint_id}/approve")
+        detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
+
+    assert approve_review_response.status_code == 200
+    assert approve_review_response.json()["status"] == "approved"
+
+    assert detail_response.status_code == 200
+    updated_pipeline = detail_response.json()
+    assert updated_pipeline["status"] == "paused"
+    assert updated_pipeline["stages"][4]["status"] == "completed"
+    assert updated_pipeline["stages"][5]["status"] == "awaiting_review"
+    assert "交付汇总" in (updated_pipeline["stages"][5]["output"] or "")
+    assert (project_dir / "main" / "delivery.md").exists()
+    assert any(
+        item["pipelineId"] == created_pipeline["id"] and item["stage"] == "交付集成"
+        for item in checkpoints_response.json()
+    )
+
+
+def test_approve_delivery_checkpoint_completes_pipeline(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "delivery-approve-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用并完成交付。",
+            },
+        )
+        created_pipeline = create_response.json()
+
+        requirement_checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
+
+        solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
+        client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+
+        review_checkpoint_id = f"cp-{created_pipeline['id']}-code_review"
+        client.post(f"/api/checkpoints/{review_checkpoint_id}/approve")
+
+        delivery_checkpoint_id = f"cp-{created_pipeline['id']}-delivery"
+        approve_delivery_response = client.post(f"/api/checkpoints/{delivery_checkpoint_id}/approve")
+        detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+
+    assert approve_delivery_response.status_code == 200
+    assert approve_delivery_response.json()["status"] == "approved"
+
+    assert detail_response.status_code == 200
+    updated_pipeline = detail_response.json()
+    assert updated_pipeline["status"] == "completed"
+    assert updated_pipeline["stages"][5]["status"] == "completed"
 
 
 def test_requirement_agent_renders_markdown_document_from_structured_json():

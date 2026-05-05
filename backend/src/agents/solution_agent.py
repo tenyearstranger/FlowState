@@ -115,6 +115,13 @@ class SolutionAgent(BaseAgent):
 - 请基于真实产品建设思路给出可执行方案，不要复述“生成文档流程”本身
 - `file_plan` 必须给出 stage3 需要实际生成的具体文件，不能只写目录
 - `file_plan` 请覆盖该方案需要落盘的完整文件集合，`must_generate` 只用于标识首批核心文件，不要为了迎合模型输出而刻意压缩文件数量
+- 为避免响应过长被截断，请保持“简洁但可执行”：
+  - `architecture_overview` 不超过 180 字
+  - `tech_stack` 不超过 12 项
+  - `directory_structure` 不超过 16 项，`purpose` 每项不超过 30 字
+  - `file_plan` 保持去重和精炼，但不要省略实现该方案所需的关键文件，`purpose` 每项不超过 30 字
+  - `api_design` 不超过 12 项，`request/response` 每项不超过 40 字
+  - `data_models` 不超过 10 项，每个模型字段不超过 12 个
 """
 
         if feedback:
@@ -353,14 +360,16 @@ class SolutionAgent(BaseAgent):
 
     def _normalize_file_plan(self, value: Any) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
+        seen_paths: set[str] = set()
         if not isinstance(value, list):
             return normalized
         for item in value:
             if not isinstance(item, dict):
                 continue
             path = str(item.get("path") or "").strip()
-            if not path:
+            if not path or path in seen_paths:
                 continue
+            seen_paths.add(path)
             normalized.append(
                 {
                     "path": path,

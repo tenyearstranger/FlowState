@@ -50,7 +50,7 @@ class LLMSettings:
     api_key: str = ""                   # API Key（从环境变量读取）
     base_url: str = ""                  # 自定义端点
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 12000
     timeout_seconds: int = 120
 
     def resolve_api_key(self) -> str:
@@ -394,7 +394,7 @@ SAMPLE_CONFIG = {
         "api_key": "${OPENAI_API_KEY}",
         "base_url": "",
         "temperature": 0.2,
-        "max_tokens": 4096
+        "max_tokens": 12000
     },
     "pipeline": {
         "output_mode": "interactive",

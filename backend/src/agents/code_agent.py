@@ -17,7 +17,7 @@ class CodeAgent(BaseAgent):
     职责：基于技术方案中的 tech stack 与 file plan 生成多文件代码
     """
 
-    BATCH_SIZE = 4
+    BATCH_SIZE = 1
     MAX_BATCH_RETRIES = 3
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
@@ -104,9 +104,11 @@ class CodeAgent(BaseAgent):
                 if not new_files:
                     try:
                         parsed = json.loads(response_text)
-                    except json.JSONDecodeError as error:
-                        raise self._build_parse_error(response_text) from error
-                    new_files = self._normalize_files(parsed, pending_batch)
+                        new_files = self._normalize_files(parsed, pending_batch)
+                    except Exception as error:
+                        if retry_index >= self.MAX_BATCH_RETRIES:
+                            raise self._build_parse_error(response_text) from error
+                        continue
 
                 filtered_new_files = {
                     path: content
@@ -183,9 +185,9 @@ class CodeAgent(BaseAgent):
 请按以下标签格式返回当前批次的每个文件：
 <file path="相对文件路径">
 <summary>该文件的作用</summary>
-<content_base64>
-base64 编码后的完整文件内容
-</content_base64>
+<content>
+完整 UTF-8 文本文件内容
+</content>
 </file>
 
 输出约束：
@@ -193,7 +195,8 @@ base64 编码后的完整文件内容
 - 只返回当前批次要求生成的文件，不要省略
 - 路径必须与当前批次 file_plan 对齐，不能返回 output.txt 之类的兜底文件
 - 文件内容必须是完整实现，不能只写 TODO 或伪代码
-- 所有文件内容都必须使用 UTF-8 文本转成 base64 后放进 `content_base64`
+- 优先使用 `content` 标签返回纯文本；仅在你无法直接输出文本时才使用 `content_base64`
+- 控制文件体积，优先生成简洁实现：单文件建议不超过 140 行，避免长篇注释和重复样板
 - 如果这是重试，请只补齐当前批次里尚未返回的文件
 """
 
@@ -285,18 +288,25 @@ base64 编码后的完整文件内容
             cleaned_response = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", cleaned_response)
             cleaned_response = re.sub(r"\s*```$", "", cleaned_response)
         pattern = re.compile(
-            r"<file\s+path=[\"']([^\"']+)[\"']>\s*(?:<summary>.*?</summary>\s*)?<content(?:_base64)?>\s*(.*?)\s*</content(?:_base64)?>\s*</file>",
+            r"<file\s+path=[\"']([^\"']+)[\"']>\s*(?:<summary>.*?</summary>\s*)?<(?P<tag>content|content_base64)>\s*(?P<body>.*?)\s*</(?P=tag)>\s*</file>",
             re.DOTALL,
         )
         for match in pattern.finditer(cleaned_response):
             path = match.group(1).strip()
-            encoded_content = match.group(2).strip()
-            if not path or not encoded_content:
+            tag = match.group("tag").strip()
+            payload = match.group("body")
+            if not path or payload is None:
                 continue
-            try:
-                content = base64.b64decode(encoded_content).decode("utf-8")
-            except Exception as error:
-                raise ValueError(f"文件 {path} 的 base64 内容无效: {error}") from error
+            if tag == "content_base64":
+                encoded_content = payload.strip()
+                if not encoded_content:
+                    continue
+                try:
+                    content = base64.b64decode(encoded_content).decode("utf-8")
+                except Exception as error:
+                    raise ValueError(f"文件 {path} 的 base64 内容无效: {error}") from error
+            else:
+                content = payload
             files[path] = content
         return files
 

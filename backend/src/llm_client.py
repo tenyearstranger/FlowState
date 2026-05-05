@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import re
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
-import httpx
 from openai import OpenAI
 
 from src.config import get_config, LLMProvider
@@ -148,16 +146,6 @@ class LLMClient:
             or DEFAULT_BASE_URLS.get(self.provider, "")
         )
 
-    _DIRECT_CONNECT_DOMAINS = {
-        "api.deepseek.com",
-    }
-
-    def _needs_direct_connect(self) -> bool:
-        if not self.base_url:
-            return False
-        host = urlparse(self.base_url).hostname or ""
-        return host in self._DIRECT_CONNECT_DOMAINS
-
     def _get_client(self) -> OpenAI:
         """获取（或创建） OpenAI 客户端"""
         if self._client is None:
@@ -170,8 +158,6 @@ class LLMClient:
                     "HTTP-Referer": "https://flowstate.dev",
                     "X-Title": "FlowState",
                 }
-            if self._needs_direct_connect():
-                kwargs["http_client"] = httpx.Client(proxy=None)
             self._client = OpenAI(**kwargs)
         return self._client
 
@@ -272,14 +258,31 @@ class LLMClient:
             system_prompt=system_prompt,
             response_format={"type": "json_object"},
         )
-        try:
-            return json.loads(resp.content)
-        except json.JSONDecodeError:
-            # 如果 LLM 返回的不是纯 JSON，尝试从中提取
-            extracted = self._extract_json(resp.content)
-            if extracted:
-                return json.loads(extracted)
-            raise
+        parsed = self._parse_json_with_fallbacks(resp.content)
+        if parsed is not None:
+            return parsed
+
+        # 最后尝试让模型修复 JSON（仅返回对象）
+        repaired = await self.chat(
+            messages=[
+                LLMMessage(
+                    role="user",
+                    content=(
+                        "将下面文本修复为一个严格合法的 JSON 对象。"
+                        "只输出 JSON 对象本身，不要解释。\n\n"
+                        f"{resp.content}"
+                    ),
+                )
+            ],
+            system_prompt="你是 JSON 修复器。输出必须是合法 JSON 对象。",
+            response_format={"type": "json_object"},
+        )
+        parsed = self._parse_json_with_fallbacks(repaired.content)
+        if parsed is not None:
+            return parsed
+
+        preview = resp.content.strip().replace("\n", "\\n")[:400]
+        raise ValueError(f"LLM 返回内容无法解析为 JSON 对象，预览: {preview}")
 
     async def close(self):
         """关闭客户端（openai SDK 无需手动关闭）"""
@@ -289,12 +292,79 @@ class LLMClient:
     # 辅助方法
     # ========================================================================
 
+    def _parse_json_with_fallbacks(self, text: str) -> Optional[dict]:
+        candidates: list[str] = []
+        raw = text.strip()
+        if raw:
+            candidates.append(raw)
+
+        extracted = self._extract_json(raw)
+        if extracted and extracted not in candidates:
+            candidates.append(extracted)
+
+        fenced = self._extract_json_from_fence(raw)
+        if fenced and fenced not in candidates:
+            candidates.append(fenced)
+
+        for candidate in candidates:
+            parsed = self._try_load_json_object(candidate)
+            if parsed is not None:
+                return parsed
+        return None
+
+    @staticmethod
+    def _try_load_json_object(text: str) -> Optional[dict]:
+        variants = [text]
+        sanitized = LLMClient._sanitize_json_text(text)
+        if sanitized != text:
+            variants.append(sanitized)
+
+        for variant in variants:
+            try:
+                parsed = json.loads(variant)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
+    def _sanitize_json_text(text: str) -> str:
+        cleaned = text.strip().lstrip("\ufeff")
+        # 去掉对象/数组中的尾逗号
+        cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+        return cleaned
+
+    @staticmethod
+    def _extract_json_from_fence(text: str) -> Optional[str]:
+        fenced = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return fenced.group(1).strip()
+        return None
+
     @staticmethod
     def _extract_json(text: str) -> Optional[str]:
         """从文本中提取 JSON 对象"""
         stack = []
         start = -1
+        in_string = False
+        escape_next = False
         for i, ch in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+
+            if ch == "\\":
+                escape_next = True
+                continue
+
+            if ch == '"':
+                in_string = not in_string
+                continue
+
+            if in_string:
+                continue
+
             if ch in ("{", "["):
                 if not stack:
                     start = i
