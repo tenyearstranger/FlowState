@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """代码评审 Agent"""
 
 import json

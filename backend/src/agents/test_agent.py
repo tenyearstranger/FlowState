@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """测试验证 Agent"""
 
 from .base_agent import BaseAgent, AgentInput, AgentOutput

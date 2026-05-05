@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Pipeline 状态持久化存储"""
 
 import json
@@ -17,7 +19,7 @@ class StateStore:
     async def save(self, pipeline: Pipeline) -> None:
         filepath = self._get_path(pipeline.id)
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(pipeline.model_dump_json(indent=2, ensure_ascii=False))
+            f.write(pipeline.model_dump_json(indent=2))
 
     async def load(self, pipeline_id: str) -> Optional[Pipeline]:
         filepath = self._get_path(pipeline_id)

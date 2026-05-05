@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """交付部署 Agent"""
 
 import json

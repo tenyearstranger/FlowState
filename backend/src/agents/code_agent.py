@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """编码实现 Agent"""
 
 import re

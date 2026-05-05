@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Agent 基类定义"""
 
 import json
