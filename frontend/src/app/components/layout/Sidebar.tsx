@@ -18,12 +18,12 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "概览", exact: true },
   { to: "/pipelines", icon: GitBranch, label: "流水线" },
   { to: "/checkpoints", icon: CheckSquare, label: "审批检查点" },
-  { to: "/agents", icon: Bot, label: "Agent 管理" },
+  { to: "/settings?tab=agents", icon: Bot, label: "Agent 管理", settingsTab: "agents" },
   { to: "/analytics", icon: BarChart2, label: "可观测性" },
 ];
 
 const bottomItems = [
-  { to: "/settings", icon: Settings, label: "设置" },
+  { to: "/settings?tab=pipeline", icon: Settings, label: "设置", settingsTab: "settings" },
 ];
 
 export function Sidebar() {
@@ -43,8 +43,15 @@ export function Sidebar() {
     sidebarQuery.data?.agents.filter((agent) => agent.status === "running").length ?? 0;
   const pendingCheckpoints =
     sidebarQuery.data?.checkpoints.filter((checkpoint) => checkpoint.status === "pending").length ?? 0;
+  const currentSettingsTab = new URLSearchParams(location.search).get("tab");
 
-  const isActive = (to: string, exact?: boolean) => {
+  const isActive = (to: string, exact?: boolean, settingsTab?: string) => {
+    if (settingsTab) {
+      if (settingsTab === "settings") {
+        return location.pathname === "/settings" && currentSettingsTab !== "agents";
+      }
+      return location.pathname === "/settings" && currentSettingsTab === settingsTab;
+    }
     if (exact) return location.pathname === to;
     return location.pathname.startsWith(to);
   };
@@ -90,7 +97,7 @@ export function Sidebar() {
       {/* Nav Items */}
       <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
-          const active = isActive(item.to, item.exact);
+          const active = isActive(item.to, item.exact, item.settingsTab);
           const badge = item.to === "/checkpoints" ? pendingCheckpoints : undefined;
           return (
             <NavLink key={item.to} to={item.to} end={item.exact}>
@@ -182,7 +189,7 @@ export function Sidebar() {
         </div>
 
         {bottomItems.map((item) => {
-          const active = isActive(item.to);
+          const active = isActive(item.to, false, item.settingsTab);
           return (
             <NavLink key={item.to} to={item.to}>
               <motion.div

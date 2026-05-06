@@ -3,46 +3,11 @@ from __future__ import annotations
 """Service layer for application settings."""
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from src.config import LLMProvider, get_config
 from src.store.settings_store import SettingsStore
-
-
-DEFAULT_PROVIDER_META: list[dict[str, Any]] = [
-    {
-        "id": "openai",
-        "name": "OpenAI",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-        "color": "#74AA9C",
-    },
-    {
-        "id": "anthropic",
-        "name": "Anthropic",
-        "models": ["claude-3-7-sonnet", "claude-3-5-haiku", "claude-3-opus"],
-        "color": "#D4A96A",
-    },
-    {
-        "id": "deepseek",
-        "name": "DeepSeek",
-        "models": ["deepseek-chat", "deepseek-coder"],
-        "color": "#6B9FFF",
-    },
-    {
-        "id": "qwen",
-        "name": "通义千问 (Qwen)",
-        "models": ["qwen-max", "qwen-plus", "qwen-turbo"],
-        "color": "#FF7A5C",
-    },
-]
-
-
-def _mask_api_key(value: str) -> str:
-    if not value:
-        return ""
-    if len(value) <= 8:
-        return "•" * len(value)
-    return f"{value[:6]}{'•' * max(4, len(value) - 10)}{value[-4:]}"
 
 
 class SettingsService:
@@ -57,18 +22,20 @@ class SettingsService:
         current = await self.store.load()
         merged = deepcopy(current)
 
-        providers = payload.get("providers", [])
-        if isinstance(providers, list):
-            provider_map = {item["id"]: deepcopy(item) for item in merged.get("providers", []) if isinstance(item, dict) and item.get("id")}
-            for provider in providers:
-                if not isinstance(provider, dict) or not provider.get("id"):
-                    continue
-                existing = provider_map.get(provider["id"], {"id": provider["id"]})
-                existing["active"] = bool(provider.get("active", existing.get("active", False)))
-                if "apiKey" in provider:
-                    existing["api_key"] = str(provider.get("apiKey") or "").strip()
-                provider_map[provider["id"]] = existing
-            merged["providers"] = list(provider_map.values())
+        llm_value = payload.get("llm")
+        if isinstance(llm_value, dict):
+            existing_llm = merged.get("llm", {})
+            if not isinstance(existing_llm, dict):
+                existing_llm = {}
+            existing_llm.update(
+                {
+                    "provider": str(llm_value.get("provider") or existing_llm.get("provider") or "deepseek").strip(),
+                    "model": str(llm_value.get("model") or existing_llm.get("model") or "").strip(),
+                    "base_url": str(llm_value.get("baseUrl") or existing_llm.get("base_url") or "").strip(),
+                    "api_key": str(llm_value.get("apiKey") or existing_llm.get("api_key") or "").strip(),
+                }
+            )
+            merged["llm"] = existing_llm
 
         for section in ("pipeline", "general"):
             section_value = payload.get(section)
@@ -81,29 +48,12 @@ class SettingsService:
 
         await self.store.save(merged)
         self._apply_runtime_config(merged)
+        self._sync_local_env_file(merged)
         return self._build_response(merged)
 
     def _build_response(self, raw: dict[str, Any]) -> dict[str, Any]:
         cfg = get_config()
-        persisted_providers = {
-            item.get("id"): item
-            for item in raw.get("providers", [])
-            if isinstance(item, dict) and item.get("id")
-        }
-
-        providers: list[dict[str, Any]] = []
-        for meta in DEFAULT_PROVIDER_META:
-            persisted = persisted_providers.get(meta["id"], {})
-            api_key = str(persisted.get("api_key") or "")
-            is_current = cfg.llm.provider.value == meta["id"]
-            providers.append(
-                {
-                    **meta,
-                    "active": bool(persisted.get("active", is_current)),
-                    "hasKey": bool(api_key),
-                    "maskedKey": _mask_api_key(api_key),
-                }
-            )
+        llm_raw = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
 
         pipeline_defaults = {
             "defaultProvider": cfg.llm.provider.value,
@@ -135,21 +85,63 @@ class SettingsService:
         }
 
         return {
-            "providers": providers,
+            "llm": {
+                "provider": str(llm_raw.get("provider") or cfg.llm.provider.value),
+                "model": str(llm_raw.get("model") or cfg.llm.model),
+                "baseUrl": str(llm_raw.get("base_url") or cfg.llm.base_url),
+                "apiKey": str(llm_raw.get("api_key") or cfg.llm.api_key),
+            },
             "pipeline": pipeline,
             "general": general,
         }
 
     def _apply_runtime_config(self, raw: dict[str, Any]) -> None:
         cfg = get_config()
-        pipeline = raw.get("pipeline") or {}
-        default_provider = str(pipeline.get("defaultProvider") or cfg.llm.provider.value).lower()
+        llm = raw.get("llm") or {}
+        provider = str(llm.get("provider") or cfg.llm.provider.value).lower()
         try:
-            cfg.llm.provider = LLMProvider(default_provider)
+            cfg.llm.provider = LLMProvider(provider)
         except ValueError:
             pass
+        cfg.llm.model = str(llm.get("model") or cfg.llm.model).strip() or cfg.llm.model
+        cfg.llm.base_url = str(llm.get("base_url") or cfg.llm.base_url).strip()
+        cfg.llm.api_key = str(llm.get("api_key") or cfg.llm.api_key).strip()
 
+        pipeline = raw.get("pipeline") or {}
         max_retries = pipeline.get("maxAgentRetries")
         if isinstance(max_retries, int) and max_retries > 0:
             cfg.pipeline.max_retries_per_stage = max_retries
 
+    def _sync_local_env_file(self, raw: dict[str, Any]) -> None:
+        llm = raw.get("llm") or {}
+        env_values = {
+            "FS_LLM_PROVIDER": str(llm.get("provider") or "").strip(),
+            "FS_LLM_MODEL": str(llm.get("model") or "").strip(),
+            "FS_LLM_BASE_URL": str(llm.get("base_url") or "").strip(),
+            "FS_LLM_API_KEY": str(llm.get("api_key") or "").strip(),
+        }
+
+        env_path = Path(__file__).resolve().parents[2] / ".env.local"
+        existing_lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+        updated_lines: list[str] = []
+        seen_keys: set[str] = set()
+
+        for line in existing_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in line:
+                updated_lines.append(line)
+                continue
+
+            key, _ = line.split("=", 1)
+            key = key.strip()
+            if key in env_values:
+                updated_lines.append(f"{key}={env_values[key]}")
+                seen_keys.add(key)
+            else:
+                updated_lines.append(line)
+
+        for key, value in env_values.items():
+            if key not in seen_keys:
+                updated_lines.append(f"{key}={value}")
+
+        env_path.write_text("\n".join(updated_lines).rstrip() + "\n", encoding="utf-8")

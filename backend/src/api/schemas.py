@@ -141,14 +141,11 @@ class FrontendActivityItem(BaseModel):
     type: str
 
 
-class FrontendSettingsProvider(BaseModel):
-    id: str
-    name: str
-    models: list[str]
-    color: str
-    active: bool
-    hasKey: bool
-    maskedKey: str
+class FrontendSettingsLLM(BaseModel):
+    provider: str
+    model: str
+    baseUrl: str
+    apiKey: str
 
 
 class FrontendSettingsPipeline(BaseModel):
@@ -175,15 +172,16 @@ class FrontendSettingsGeneral(BaseModel):
 
 
 class FrontendSettingsResponse(BaseModel):
-    providers: list[FrontendSettingsProvider]
+    llm: FrontendSettingsLLM
     pipeline: FrontendSettingsPipeline
     general: FrontendSettingsGeneral
 
 
-class FrontendSettingsProviderUpdate(BaseModel):
-    id: str
-    active: bool
-    apiKey: str | None = None
+class FrontendSettingsLLMUpdate(BaseModel):
+    provider: str
+    model: str
+    baseUrl: str
+    apiKey: str
 
 
 class FrontendSettingsPipelineUpdate(BaseModel):
@@ -207,6 +205,6 @@ class FrontendSettingsGeneralUpdate(BaseModel):
 
 
 class FrontendSettingsUpdateRequest(BaseModel):
-    providers: list[FrontendSettingsProviderUpdate]
+    llm: FrontendSettingsLLMUpdate
     pipeline: FrontendSettingsPipelineUpdate
     general: FrontendSettingsGeneralUpdate

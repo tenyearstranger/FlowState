@@ -1,11 +1,8 @@
-export interface SettingsProvider {
-  id: string;
-  name: string;
-  models: string[];
-  color: string;
-  active: boolean;
-  hasKey: boolean;
-  maskedKey: string;
+export interface SettingsLlmConfig {
+  provider: string;
+  model: string;
+  baseUrl: string;
+  apiKey: string;
 }
 
 export interface SettingsPipelineConfig {
@@ -32,19 +29,13 @@ export interface SettingsGeneralConfig {
 }
 
 export interface SettingsData {
-  providers: SettingsProvider[];
+  llm: SettingsLlmConfig;
   pipeline: SettingsPipelineConfig;
   general: SettingsGeneralConfig;
 }
 
-export interface SettingsProviderUpdate {
-  id: string;
-  active: boolean;
-  apiKey?: string | null;
-}
-
 export interface SettingsUpdatePayload {
-  providers: SettingsProviderUpdate[];
+  llm: SettingsLlmConfig;
   pipeline: SettingsPipelineConfig;
   general: Omit<SettingsGeneralConfig, "appVersion" | "engineVersion" | "apiVersion">;
 }

@@ -787,15 +787,17 @@ def test_settings_round_trip(tmp_path):
         get_response = client.get("/api/settings")
         assert get_response.status_code == 200
         initial = get_response.json()
-        assert "providers" in initial
+        assert "llm" in initial
 
         update_response = client.put(
             "/api/settings",
             json={
-                "providers": [
-                    {"id": "deepseek", "active": True, "apiKey": "sk-test-deepseek-1234"},
-                    {"id": "openai", "active": False},
-                ],
+                "llm": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "baseUrl": "https://api.deepseek.com/",
+                    "apiKey": "sk-test-deepseek-1234",
+                },
                 "pipeline": {
                     "defaultProvider": "deepseek",
                     "maxAgentRetries": 5,
@@ -819,10 +821,10 @@ def test_settings_round_trip(tmp_path):
         assert update_response.status_code == 200
         updated = update_response.json()
 
-    deepseek = next(item for item in updated["providers"] if item["id"] == "deepseek")
-    assert deepseek["active"] is True
-    assert deepseek["hasKey"] is True
-    assert deepseek["maskedKey"].startswith("sk-tes")
+    assert updated["llm"]["provider"] == "deepseek"
+    assert updated["llm"]["model"] == "deepseek-chat"
+    assert updated["llm"]["baseUrl"] == "https://api.deepseek.com/"
+    assert updated["llm"]["apiKey"] == "sk-test-deepseek-1234"
     assert updated["pipeline"]["maxAgentRetries"] == 5
     assert updated["pipeline"]["repositoryPath"] == "./repo"
     assert updated["general"]["logRetentionDays"] == "30"
