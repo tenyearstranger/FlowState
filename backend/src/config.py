@@ -27,6 +27,7 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     DEEPSEEK = "deepseek"
+    KIMI = "kimi"
     OPENROUTER = "openrouter"
     AZURE_OPENAI = "azure_openai"
     LOCAL = "local"            # 本地部署（如 Ollama / vLLM）
@@ -67,6 +68,8 @@ class LLMSettings:
         env_var = env_map.get(self.provider)
         if env_var:
             return os.getenv(env_var, "")
+        if self.provider == LLMProvider.KIMI:
+            return os.getenv("MOONSHOT_API_KEY", "") or os.getenv("KIMI_API_KEY", "")
         return ""
 
     @property
@@ -78,7 +81,10 @@ class LLMSettings:
 @dataclass
 class StageSettings:
     """单个 Agent 阶段配置"""
+    provider_override: Optional[str] = None      # 覆盖默认 provider
     model_override: Optional[str] = None         # 覆盖默认模型
+    api_key_override: Optional[str] = None       # 覆盖默认 API Key
+    base_url_override: Optional[str] = None      # 覆盖默认端点
     temperature_override: Optional[float] = None # 覆盖默认温度
     needs_human_review: bool = True              # 该阶段是否需要人工确认
     system_prompt: str = ""                      # 自定义系统提示词
@@ -176,11 +182,36 @@ class FlowStateConfig:
 
 _CONFIG_INSTANCE: Optional[FlowStateConfig] = None
 
+STAGE_ENV_PREFIX_MAP: dict[str, str] = {
+    "requirement_analysis": "FS_AGENT_REQUIREMENTS",
+    "solution_design": "FS_AGENT_ARCHITECT",
+    "coding": "FS_AGENT_CODEGEN",
+    "testing": "FS_AGENT_TEST",
+    "code_review": "FS_AGENT_REVIEW",
+    "delivery": "FS_AGENT_DELIVERY",
+}
 
-def _load_local_env_file() -> None:
-    """从 backend/.env.local 加载本地环境变量，不覆盖已存在环境变量。"""
+
+def _get_backend_env_file() -> Path:
+    """解析后端使用的 .env 文件路径，并迁移旧的 .env.local。"""
+    configured_path = os.getenv("FS_ENV_FILE_PATH", "").strip()
+    if configured_path:
+        return Path(configured_path)
+
     backend_root = Path(__file__).resolve().parents[1]
-    env_file = backend_root / ".env.local"
+    env_file = backend_root / ".env"
+    legacy_env_file = backend_root / ".env.local"
+
+    if not env_file.exists() and legacy_env_file.exists():
+        env_file.write_text(legacy_env_file.read_text(encoding="utf-8"), encoding="utf-8")
+        legacy_env_file.unlink()
+
+    return env_file
+
+
+def _load_backend_env_file() -> None:
+    """从 backend/.env 加载本地环境变量，不覆盖已存在环境变量。"""
+    env_file = _get_backend_env_file()
     if not env_file.exists():
         return
 
@@ -198,7 +229,7 @@ def _load_local_env_file() -> None:
 
 def _load_from_env() -> FlowStateConfig:
     """从环境变量加载配置覆盖"""
-    _load_local_env_file()
+    _load_backend_env_file()
     cfg = FlowStateConfig()
 
     # --- LLM 配置 ---
@@ -214,6 +245,27 @@ def _load_from_env() -> FlowStateConfig:
     cfg.llm.base_url = os.getenv("FS_LLM_BASE_URL", cfg.llm.base_url)
     cfg.llm.temperature = float(os.getenv("FS_LLM_TEMPERATURE", str(cfg.llm.temperature)))
     cfg.llm.max_tokens = int(os.getenv("FS_LLM_MAX_TOKENS", str(cfg.llm.max_tokens)))
+
+    for stage_name, env_prefix in STAGE_ENV_PREFIX_MAP.items():
+        stage_cfg = cfg.stages.get(stage_name)
+        if stage_cfg is None:
+            continue
+
+        provider_override = os.getenv(f"{env_prefix}_PROVIDER", "").strip().lower()
+        if provider_override:
+            stage_cfg.provider_override = provider_override
+
+        model_override = os.getenv(f"{env_prefix}_MODEL", "").strip()
+        if model_override:
+            stage_cfg.model_override = model_override
+
+        api_key_override = os.getenv(f"{env_prefix}_API_KEY", "").strip()
+        if api_key_override:
+            stage_cfg.api_key_override = api_key_override
+
+        base_url_override = os.getenv(f"{env_prefix}_BASE_URL", "").strip()
+        if base_url_override:
+            stage_cfg.base_url_override = base_url_override
 
     # --- Pipeline 配置 ---
     mode_str = os.getenv("FS_OUTPUT_MODE", "").lower()
@@ -297,8 +349,14 @@ def _deep_merge(cfg: FlowStateConfig, data: dict) -> None:
                 existing = cfg.stages[stage_name]
                 if "needs_human_review" in stage_cfg:
                     existing.needs_human_review = stage_cfg["needs_human_review"]
+                if "provider_override" in stage_cfg:
+                    existing.provider_override = stage_cfg["provider_override"]
                 if "model_override" in stage_cfg:
                     existing.model_override = stage_cfg["model_override"]
+                if "api_key_override" in stage_cfg:
+                    existing.api_key_override = stage_cfg["api_key_override"]
+                if "base_url_override" in stage_cfg:
+                    existing.base_url_override = stage_cfg["base_url_override"]
                 if "system_prompt" in stage_cfg:
                     existing.system_prompt = stage_cfg["system_prompt"]
 

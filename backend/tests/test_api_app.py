@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import os
 
 from fastapi.testclient import TestClient
 
@@ -781,53 +782,138 @@ def test_dynamic_token_analytics_and_agents(tmp_path):
 
 
 def test_settings_round_trip(tmp_path):
+    env_file = tmp_path / ".env"
+    settings_file = tmp_path / "settings.json"
+    previous_env_path = os.environ.get("FS_ENV_FILE_PATH")
+    previous_settings_path = os.environ.get("FS_SETTINGS_PATH")
+    os.environ["FS_ENV_FILE_PATH"] = str(env_file)
+    os.environ["FS_SETTINGS_PATH"] = str(settings_file)
     client, _ = create_test_client(tmp_path)
+    try:
+        with client:
+            get_response = client.get("/api/settings")
+            assert get_response.status_code == 200
+            initial = get_response.json()
+            assert "llm" in initial
+            assert "agentConfigs" in initial
 
-    with client:
-        get_response = client.get("/api/settings")
-        assert get_response.status_code == 200
-        initial = get_response.json()
-        assert "llm" in initial
-
-        update_response = client.put(
-            "/api/settings",
-            json={
-                "llm": {
-                    "provider": "deepseek",
-                    "model": "deepseek-chat",
-                    "baseUrl": "https://api.deepseek.com/",
-                    "apiKey": "sk-test-deepseek-1234",
+            update_response = client.put(
+                "/api/settings",
+                json={
+                    "llm": {
+                        "provider": "deepseek",
+                        "model": "deepseek-chat",
+                        "baseUrl": "https://api.deepseek.com/",
+                        "apiKey": "sk-test-deepseek-1234",
+                    },
+                    "agentConfigs": {
+                        "architect-agent": {
+                            "provider": "kimi",
+                            "model": "kimi-k2.6",
+                            "baseUrl": "https://api.moonshot.cn/v1",
+                            "apiKey": "sk-agent-kimi-5678",
+                        }
+                    },
+                    "pipeline": {
+                        "defaultProvider": "deepseek",
+                        "maxAgentRetries": 5,
+                        "checkpointTimeoutMinutes": 45,
+                        "autoCreateBranch": False,
+                        "autoCommitCode": True,
+                        "autoCreateMR": False,
+                        "branchNamePattern": "feature/{pipeline-id}",
+                        "repositoryPath": "./repo",
+                        "semanticIndex": True,
+                    },
+                    "general": {
+                        "checkpointNotifications": False,
+                        "pipelineCompleteNotifications": True,
+                        "agentFailureAlerts": False,
+                        "logRetentionDays": "30",
+                        "anonymousUsageStats": True,
+                    },
                 },
-                "pipeline": {
-                    "defaultProvider": "deepseek",
-                    "maxAgentRetries": 5,
-                    "checkpointTimeoutMinutes": 45,
-                    "autoCreateBranch": False,
-                    "autoCommitCode": True,
-                    "autoCreateMR": False,
-                    "branchNamePattern": "feature/{pipeline-id}",
-                    "repositoryPath": "./repo",
-                    "semanticIndex": True,
-                },
-                "general": {
-                    "checkpointNotifications": False,
-                    "pipelineCompleteNotifications": True,
-                    "agentFailureAlerts": False,
-                    "logRetentionDays": "30",
-                    "anonymousUsageStats": True,
-                },
-            },
-        )
-        assert update_response.status_code == 200
-        updated = update_response.json()
+            )
+            assert update_response.status_code == 200
+            updated = update_response.json()
+    finally:
+        if previous_env_path is None:
+            os.environ.pop("FS_ENV_FILE_PATH", None)
+        else:
+            os.environ["FS_ENV_FILE_PATH"] = previous_env_path
+        if previous_settings_path is None:
+            os.environ.pop("FS_SETTINGS_PATH", None)
+        else:
+            os.environ["FS_SETTINGS_PATH"] = previous_settings_path
 
     assert updated["llm"]["provider"] == "deepseek"
     assert updated["llm"]["model"] == "deepseek-chat"
     assert updated["llm"]["baseUrl"] == "https://api.deepseek.com/"
     assert updated["llm"]["apiKey"] == "sk-test-deepseek-1234"
+    assert updated["agentConfigs"]["architect-agent"]["provider"] == "kimi"
+    assert updated["agentConfigs"]["architect-agent"]["model"] == "kimi-k2.6"
+    assert updated["agentConfigs"]["architect-agent"]["baseUrl"] == "https://api.moonshot.cn/v1"
+    assert updated["agentConfigs"]["architect-agent"]["apiKey"] == "sk-agent-kimi-5678"
     assert updated["pipeline"]["maxAgentRetries"] == 5
     assert updated["pipeline"]["repositoryPath"] == "./repo"
     assert updated["general"]["logRetentionDays"] == "30"
+    assert env_file.exists()
+    env_text = env_file.read_text(encoding="utf-8")
+    assert "FS_LLM_PROVIDER=deepseek" in env_text
+    assert "FS_AGENT_ARCHITECT_PROVIDER=kimi" in env_text
+    assert "FS_AGENT_ARCHITECT_MODEL=kimi-k2.6" in env_text
+    assert "FS_AGENT_REQUIREMENTS_PROVIDER=" in env_text
+
+
+def test_validate_llm_settings_rejects_invalid_format(tmp_path):
+    client, _ = create_test_client(tmp_path)
+
+    with client:
+        response = client.post(
+            "/api/settings/validate-llm",
+            json={
+                "agentId": "architect-agent",
+                "llm": {
+                    "provider": "unknown-provider",
+                    "model": "",
+                    "baseUrl": "not-a-url",
+                    "apiKey": "bad key",
+                },
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Provider" in response.json()["detail"] or "URL" in response.json()["detail"]
+
+
+def test_validate_llm_settings_connectivity_success(tmp_path):
+    client, _ = create_test_client(tmp_path)
+
+    async def fake_connectivity(payload):
+        assert payload["provider"] == "kimi"
+        assert payload["model"] == "kimi-k2.6"
+
+    client.app.state.settings_service._test_llm_connectivity = fake_connectivity
+
+    with client:
+        response = client.post(
+            "/api/settings/validate-llm",
+            json={
+                "agentId": "architect-agent",
+                "llm": {
+                    "provider": "kimi",
+                    "model": "kimi-k2.6",
+                    "baseUrl": "https://api.moonshot.cn/v1",
+                    "apiKey": "sk-test-kimi-1234",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["provider"] == "kimi"
+    assert payload["model"] == "kimi-k2.6"
 
 
 def test_pipeline_pause_resume_and_cancel_actions(tmp_path):

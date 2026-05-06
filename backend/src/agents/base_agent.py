@@ -83,8 +83,14 @@ class BaseAgent(ABC):
         """获取 LLM 客户端（按需创建）"""
         if self._llm_client is None:
             overrides = {}
+            if self.stage_config.provider_override:
+                overrides["provider"] = self.stage_config.provider_override
             if self.stage_config.model_override:
                 overrides["model"] = self.stage_config.model_override
+            if self.stage_config.api_key_override:
+                overrides["api_key"] = self.stage_config.api_key_override
+            if self.stage_config.base_url_override:
+                overrides["base_url"] = self.stage_config.base_url_override
             if self.stage_config.temperature_override:
                 overrides["temperature"] = self.stage_config.temperature_override
 

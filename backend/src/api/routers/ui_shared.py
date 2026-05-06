@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+from src.config import get_config, get_stage_config
 from src.api.schemas import (
     FrontendActivityItem,
     FrontendAgent,
@@ -414,13 +415,13 @@ def build_checkpoint_id(pipeline_id: str, stage: StageType) -> str:
 
 
 def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
+    cfg = get_config()
     agent_meta = {
         StageType.REQUIREMENT: {
             "id": "requirements-agent",
             "name": "RequirementsAgent",
             "role": "需求分析",
             "description": "负责解析原始需求，输出结构化需求文档与模块划分。",
-            "provider": "DeepSeek",
             "color": "#5B72FF",
         },
         StageType.SOLUTION: {
@@ -428,7 +429,6 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
             "name": "ArchitectAgent",
             "role": "方案设计",
             "description": "负责输出技术方案、接口设计与文件规划。",
-            "provider": "DeepSeek",
             "color": "#A259FF",
         },
         StageType.CODING: {
@@ -436,7 +436,6 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
             "name": "CodegenAgent",
             "role": "代码生成",
             "description": "负责根据方案分批生成多文件代码。",
-            "provider": "DeepSeek",
             "color": "#FF7A5C",
         },
         StageType.TESTING: {
@@ -444,7 +443,6 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
             "name": "TestAgent",
             "role": "测试生成",
             "description": "负责生成测试、汇总报告并判断是否需要人工确认。",
-            "provider": "DeepSeek",
             "color": "#34C759",
         },
         StageType.REVIEW: {
@@ -452,7 +450,6 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
             "name": "ReviewAgent",
             "role": "代码评审",
             "description": "负责给出代码质量、风险和改进建议。",
-            "provider": "DeepSeek",
             "color": "#FF9F0A",
         },
         StageType.DELIVERY: {
@@ -460,7 +457,6 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
             "name": "DeliveryAgent",
             "role": "交付集成",
             "description": "负责产出交付清单、PR 信息和部署说明。",
-            "provider": "DeepSeek",
             "color": "#00C7BE",
         },
     }
@@ -503,14 +499,20 @@ def build_dynamic_agents(pipelines: list[Pipeline]) -> list[FrontendAgent]:
         tokens = stats["tokens"]
         assert isinstance(durations, list)
         assert isinstance(tokens, list)
+        stage_cfg = get_stage_config(stage_type.value)
+        provider_name = str(
+            stage_cfg.provider_override
+            or cfg.llm.provider.value
+        ).replace("_", " ").title()
+        resolved_model = str(stats["model"] or stage_cfg.model_override or cfg.llm.model or "unknown")
         agents.append(
             FrontendAgent(
                 id=meta["id"],
                 name=meta["name"],
                 role=meta["role"],
                 description=meta["description"],
-                model=str(stats["model"] or "unknown"),
-                provider=meta["provider"],
+                model=resolved_model,
+                provider=provider_name,
                 status="running" if int(stats["running"]) > 0 else "idle",
                 tasksCompleted=int(stats["tasks_completed"]),
                 avgDuration=round(sum(durations) / len(durations)) if durations else 0,

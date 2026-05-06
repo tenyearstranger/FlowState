@@ -32,7 +32,7 @@ npm run dev
 
 ### 2. 对接真实后端
 
-创建本地环境变量文件，例如 `.env.local`：
+创建本地环境变量文件，例如 `.env`：
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080/api

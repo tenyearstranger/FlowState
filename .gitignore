@@ -5,3 +5,5 @@ __pycache__/
 .flowstate_settings.json
 .pytest_cache/
 .claude/
+backend/.env
+backend/.env.local

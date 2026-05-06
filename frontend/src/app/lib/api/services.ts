@@ -3,7 +3,7 @@ import type { Agent } from "../../types/agent";
 import type { ActivityItem, AnalyticsOverview } from "../../types/analytics";
 import type { Checkpoint } from "../../types/checkpoint";
 import type { CreatePipelinePayload, Pipeline } from "../../types/pipeline";
-import type { SettingsData, SettingsUpdatePayload } from "../../types/settings";
+import type { SettingsData, SettingsUpdatePayload, SettingsValidationResult, SettingsLlmConfig } from "../../types/settings";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -55,4 +55,6 @@ export const settingsApi = {
     apiClient.get<SettingsData>("/settings", options),
   update: (payload: SettingsUpdatePayload, options?: RequestOptions) =>
     apiClient.put<SettingsData>("/settings", payload, options),
+  validateLlm: (payload: { agentId?: string; llm: SettingsLlmConfig }, options?: RequestOptions) =>
+    apiClient.post<SettingsValidationResult>("/settings/validate-llm", payload, options),
 };

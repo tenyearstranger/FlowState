@@ -22,15 +22,6 @@ import {
   pipelinesApi,
 } from "../lib/api/services";
 
-const templates = [
-  {
-    title: "新功能开发",
-    desc: "完整的 6 阶段开发流程",
-    icon: Zap,
-    color: "#5B72FF",
-  },
-];
-
 export function Dashboard() {
   const navigate = useNavigate();
   const dashboardQuery = useApiQuery(
@@ -104,7 +95,7 @@ export function Dashboard() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-8 py-8">
+      <div className="max-w-5xl min-h-full mx-auto px-8 py-8 flex flex-col">
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -226,12 +217,12 @@ export function Dashboard() {
           ))}
         </motion.div>
 
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-3 gap-6 flex-1 min-h-[440px]">
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="col-span-2 rounded-2xl overflow-hidden"
+            className="col-span-2 rounded-2xl overflow-hidden h-full flex flex-col"
             style={{
               background: "rgba(255,255,255,0.03)",
               border: "1px solid rgba(255,255,255,0.07)",
@@ -262,7 +253,7 @@ export function Dashboard() {
               </button>
             </div>
 
-            <div>
+            <div className="flex-1">
               {pipelines.slice(0, 4).map((pipeline, i) => (
                 <motion.div
                   key={pipeline.id}
@@ -354,7 +345,7 @@ export function Dashboard() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25 }}
-            className="rounded-2xl overflow-hidden"
+            className="rounded-2xl overflow-hidden h-full flex flex-col"
             style={{
               background: "rgba(255,255,255,0.03)",
               border: "1px solid rgba(255,255,255,0.07)",
@@ -370,7 +361,7 @@ export function Dashboard() {
               </span>
             </div>
 
-            <div className="px-4 py-3 space-y-1">
+            <div className="px-4 py-3 space-y-1 flex-1">
               {recentActivity.map((item, i) => (
                 <motion.div
                   key={`${item.time}-${item.text}`}
@@ -413,55 +404,6 @@ export function Dashboard() {
             </div>
           </motion.div>
         </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          className="mt-6 rounded-2xl p-5"
-          style={{
-            background: "rgba(255,255,255,0.02)",
-            border: "1px solid rgba(255,255,255,0.06)",
-          }}
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <Zap size={13} style={{ color: "rgba(255,255,255,0.4)" }} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>
-              Pipeline 模板
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {templates.map((template) => (
-              <motion.button
-                key={template.title}
-                whileHover={{ y: -2, background: "rgba(255,255,255,0.06)" }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => navigate("/pipelines")}
-                className="flex items-center gap-3 p-4 rounded-xl text-left transition-all"
-                style={{
-                  background: "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  cursor: "pointer",
-                }}
-              >
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: `${template.color}18` }}
-                >
-                  <template.icon size={14} style={{ color: template.color }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.75)" }}>
-                    {template.title}
-                  </div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)" }}>
-                    {template.desc}
-                  </div>
-                </div>
-              </motion.button>
-            ))}
-          </div>
-        </motion.div>
       </div>
     </div>
   );

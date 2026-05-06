@@ -30,12 +30,21 @@ export interface SettingsGeneralConfig {
 
 export interface SettingsData {
   llm: SettingsLlmConfig;
+  agentConfigs: Record<string, SettingsLlmConfig>;
   pipeline: SettingsPipelineConfig;
   general: SettingsGeneralConfig;
 }
 
 export interface SettingsUpdatePayload {
   llm: SettingsLlmConfig;
+  agentConfigs: Record<string, SettingsLlmConfig>;
   pipeline: SettingsPipelineConfig;
   general: Omit<SettingsGeneralConfig, "appVersion" | "engineVersion" | "apiVersion">;
+}
+
+export interface SettingsValidationResult {
+  ok: boolean;
+  message: string;
+  provider: string;
+  model: string;
 }

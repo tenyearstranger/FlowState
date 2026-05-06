@@ -173,6 +173,7 @@ class FrontendSettingsGeneral(BaseModel):
 
 class FrontendSettingsResponse(BaseModel):
     llm: FrontendSettingsLLM
+    agentConfigs: dict[str, FrontendSettingsLLM]
     pipeline: FrontendSettingsPipeline
     general: FrontendSettingsGeneral
 
@@ -206,5 +207,18 @@ class FrontendSettingsGeneralUpdate(BaseModel):
 
 class FrontendSettingsUpdateRequest(BaseModel):
     llm: FrontendSettingsLLMUpdate
+    agentConfigs: dict[str, FrontendSettingsLLMUpdate] = Field(default_factory=dict)
     pipeline: FrontendSettingsPipelineUpdate
     general: FrontendSettingsGeneralUpdate
+
+
+class FrontendSettingsValidateRequest(BaseModel):
+    agentId: str | None = None
+    llm: FrontendSettingsLLMUpdate
+
+
+class FrontendSettingsValidateResponse(BaseModel):
+    ok: bool
+    message: str
+    provider: str
+    model: str

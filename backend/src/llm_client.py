@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URLS: Dict[LLMProvider, str] = {
     LLMProvider.OPENAI: "https://api.openai.com/v1",
     LLMProvider.DEEPSEEK: "https://api.deepseek.com",
+    LLMProvider.KIMI: "https://api.moonshot.cn/v1",
     LLMProvider.ANTHROPIC: "https://api.anthropic.com/v1",
     LLMProvider.OPENROUTER: "https://openrouter.ai/api/v1",
     LLMProvider.LOCAL: "http://localhost:11434/v1",  # Ollama
@@ -37,6 +38,7 @@ DEFAULT_BASE_URLS: Dict[LLMProvider, str] = {
 DEFAULT_MODELS: Dict[LLMProvider, str] = {
     LLMProvider.OPENAI: "gpt-4",
     LLMProvider.DEEPSEEK: "deepseek-chat",
+    LLMProvider.KIMI: "kimi-k2.5",
     LLMProvider.ANTHROPIC: "claude-3-opus-20240229",
     LLMProvider.OPENROUTER: "openai/gpt-4",
     LLMProvider.LOCAL: "llama3",
@@ -171,6 +173,22 @@ class LLMClient:
             return {"thinking": {"type": "enabled"}}
         return None
 
+    def _resolve_temperature(self) -> float:
+        """
+        Kimi 的 kimi-k2.6 当前只接受 temperature=1。
+        """
+        if self.provider == LLMProvider.KIMI and self.model.startswith("kimi-k2.6"):
+            return 1.0
+        return self.temperature
+
+    def _resolve_stop_tokens(self) -> Optional[List[str]]:
+        """
+        Kimi 的 kimi-k2.6 当前与 stop 参数组合时会返回空 content。
+        """
+        if self.provider == LLMProvider.KIMI and self.model.startswith("kimi-k2.6"):
+            return None
+        return EOS
+
     async def chat(
         self,
         messages: List[LLMMessage],
@@ -203,11 +221,13 @@ class LLMClient:
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "messages": api_messages,
-            "temperature": self.temperature,
+            "temperature": self._resolve_temperature(),
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
-            "stop": EOS,
         }
+        stop_tokens = self._resolve_stop_tokens()
+        if stop_tokens:
+            kwargs["stop"] = stop_tokens
         if response_format:
             kwargs["response_format"] = response_format
 

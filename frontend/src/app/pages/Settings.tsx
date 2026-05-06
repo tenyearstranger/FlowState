@@ -33,6 +33,7 @@ const emptySettings: SettingsData = {
     baseUrl: "https://api.deepseek.com/",
     apiKey: "",
   },
+  agentConfigs: {},
   pipeline: {
     defaultProvider: "deepseek",
     maxAgentRetries: 3,
@@ -56,6 +57,25 @@ const emptySettings: SettingsData = {
   },
 };
 
+const AGENT_ENV_PREFIX: Record<string, string> = {
+  "requirements-agent": "FS_AGENT_REQUIREMENTS",
+  "architect-agent": "FS_AGENT_ARCHITECT",
+  "codegen-agent": "FS_AGENT_CODEGEN",
+  "test-agent": "FS_AGENT_TEST",
+  "review-agent": "FS_AGENT_REVIEW",
+  "delivery-agent": "FS_AGENT_DELIVERY",
+};
+
+function getAgentEnvLabels(agentId?: string) {
+  const prefix = (agentId && AGENT_ENV_PREFIX[agentId]) || "FS_LLM";
+  return {
+    provider: `${prefix}_PROVIDER`,
+    model: `${prefix}_MODEL`,
+    baseUrl: `${prefix}_BASE_URL`,
+    apiKey: `${prefix}_API_KEY`,
+  };
+}
+
 function getTab(tab: string | null): Tab {
   if (tab === "agents" || tab === "pipeline" || tab === "general") {
     return tab;
@@ -66,6 +86,7 @@ function getTab(tab: string | null): Tab {
 function buildSettingsPayload(draft: SettingsData): SettingsUpdatePayload {
   return {
     llm: draft.llm,
+    agentConfigs: draft.agentConfigs,
     pipeline: draft.pipeline,
     general: {
       checkpointNotifications: draft.general.checkpointNotifications,
@@ -75,6 +96,48 @@ function buildSettingsPayload(draft: SettingsData): SettingsUpdatePayload {
       anonymousUsageStats: draft.general.anonymousUsageStats,
     },
   };
+}
+
+function validateAgentConfigInput(config: SettingsLlmConfig): string[] {
+  const errors: string[] = [];
+  const provider = config.provider.trim().toLowerCase();
+  const model = config.model.trim();
+  const baseUrl = config.baseUrl.trim();
+  const apiKey = config.apiKey.trim();
+  const allowedProviders = new Set(["openai", "anthropic", "deepseek", "kimi", "openrouter", "azure_openai", "local"]);
+
+  if (!provider) {
+    errors.push("Provider 不能为空。");
+  } else if (!allowedProviders.has(provider)) {
+    errors.push(`Provider 不受支持：${provider}`);
+  }
+
+  if (!model) {
+    errors.push("Model 不能为空。");
+  }
+
+  if (!baseUrl) {
+    errors.push("Base URL 不能为空。");
+  } else {
+    try {
+      const parsed = new URL(baseUrl);
+      if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) {
+        errors.push("Base URL 格式无效，请填写完整的 http(s) 地址。");
+      }
+    } catch {
+      errors.push("Base URL 格式无效，请填写完整的 http(s) 地址。");
+    }
+  }
+
+  if (provider !== "local") {
+    if (!apiKey) {
+      errors.push("API Key 不能为空。");
+    } else if (/\s/.test(apiKey)) {
+      errors.push("API Key 不能包含空白字符。");
+    }
+  }
+
+  return errors;
 }
 
 export function Settings() {
@@ -87,7 +150,9 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
+  const [configTesting, setConfigTesting] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [configSuccess, setConfigSuccess] = useState<string | null>(null);
   const [configDraft, setConfigDraft] = useState<SettingsLlmConfig>(emptySettings.llm);
 
   const settingsQuery = useApiQuery(
@@ -129,6 +194,12 @@ export function Settings() {
     () => agents.find((agent) => agent.id === selectedAgent) ?? agents[0],
     [agents, selectedAgent]
   );
+  const activeAgentConfig = useMemo(() => {
+    if (!activeAgent) {
+      return draft.llm;
+    }
+    return draft.agentConfigs[activeAgent.id] ?? draft.llm;
+  }, [activeAgent, draft.agentConfigs, draft.llm]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -151,36 +222,88 @@ export function Settings() {
   };
 
   const handleConfigSave = async () => {
+    if (!activeAgent) {
+      return;
+    }
+    const formatErrors = validateAgentConfigInput(configDraft);
+    if (formatErrors.length > 0) {
+      const message = formatErrors.join("\n");
+      setConfigError(message);
+      setConfigSuccess(null);
+      toast.error("配置格式错误", { description: formatErrors[0] });
+      return;
+    }
     setConfigSaving(true);
     setConfigError(null);
+    setConfigSuccess(null);
     try {
+      const validation = await settingsApi.validateLlm({
+        agentId: activeAgent.id,
+        llm: configDraft,
+      });
       const updated = await settingsApi.update(
         buildSettingsPayload({
           ...draft,
-          llm: configDraft,
-          pipeline: {
-            ...draft.pipeline,
-            defaultProvider: configDraft.provider,
+          agentConfigs: {
+            ...draft.agentConfigs,
+            [activeAgent.id]: configDraft,
           },
         })
       );
       setDraft(updated);
       setConfigOpen(false);
       toast.success("Agent 配置已保存", {
-        description: "后端 LLM 运行参数已经更新。",
+        description: validation.message,
       });
     } catch (error) {
       const message = getErrorMessage(error);
       setConfigError(message);
+      setConfigSuccess(null);
       toast.error("保存失败", { description: message });
     } finally {
       setConfigSaving(false);
     }
   };
 
+  const handleConfigTest = async () => {
+    if (!activeAgent) {
+      return;
+    }
+    const formatErrors = validateAgentConfigInput(configDraft);
+    if (formatErrors.length > 0) {
+      const message = formatErrors.join("\n");
+      setConfigError(message);
+      setConfigSuccess(null);
+      toast.error("配置格式错误", { description: formatErrors[0] });
+      return;
+    }
+
+    setConfigTesting(true);
+    setConfigError(null);
+    setConfigSuccess(null);
+    try {
+      const result = await settingsApi.validateLlm({
+        agentId: activeAgent.id,
+        llm: configDraft,
+      });
+      setConfigSuccess(result.message);
+      toast.success("连通性测试成功", {
+        description: `${result.provider} / ${result.model} 已可用。`,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setConfigError(message);
+      setConfigSuccess(null);
+      toast.error("连通性测试失败", { description: message });
+    } finally {
+      setConfigTesting(false);
+    }
+  };
+
   const openConfigDialog = () => {
     setConfigError(null);
-    setConfigDraft(draft.llm);
+    setConfigSuccess(null);
+    setConfigDraft(activeAgentConfig);
     setConfigOpen(true);
   };
 
@@ -190,7 +313,7 @@ export function Settings() {
   ];
 
   const pageDescriptions: Record<Tab, string> = {
-    agents: "查看各阶段 Agent 的运行状态，并通过配置弹窗管理后端 LLM 运行参数。",
+    agents: "查看各阶段 Agent 的运行状态，并为每个 Agent 单独管理 LLM 运行参数。",
     pipeline: "配置 Pipeline 的重试策略、Git 行为与代码库上下文。",
     general: "管理通知、日志保留与应用级通用设置。",
   };
@@ -327,7 +450,8 @@ export function Settings() {
             onSelectAgent={setSelectedAgent}
             onReload={agentsQuery.reload}
             onOpenConfig={openConfigDialog}
-            llmConfig={draft.llm}
+            llmConfig={activeAgentConfig}
+            envLabels={getAgentEnvLabels(activeAgent?.id)}
           />
         )}
 
@@ -552,13 +676,21 @@ export function Settings() {
         activeAgent={activeAgent}
         draft={configDraft}
         saving={configSaving}
+        testing={configTesting}
         error={configError}
+        successMessage={configSuccess}
+        envLabels={getAgentEnvLabels(activeAgent?.id)}
         onChange={(field, value) =>
-          setConfigDraft((current) => ({
-            ...current,
-            [field]: value,
-          }))
+          {
+            setConfigError(null);
+            setConfigSuccess(null);
+            setConfigDraft((current) => ({
+              ...current,
+              [field]: value,
+            }));
+          }
         }
+        onTest={handleConfigTest}
         onSave={handleConfigSave}
       />
     </div>
@@ -575,6 +707,7 @@ function AgentManagementTab({
   onReload,
   onOpenConfig,
   llmConfig,
+  envLabels,
 }: {
   agents: Agent[];
   loading: boolean;
@@ -585,6 +718,7 @@ function AgentManagementTab({
   onReload: () => void;
   onOpenConfig: () => void;
   llmConfig: SettingsLlmConfig;
+  envLabels: ReturnType<typeof getAgentEnvLabels>;
 }) {
   if (error) {
     return (
@@ -858,13 +992,13 @@ function AgentManagementTab({
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              <SectionCard title="当前后端 LLM 配置">
+              <SectionCard title="当前 Agent LLM 配置">
                 <div className="py-2 space-y-3">
                   {[
-                    { label: "FS_LLM_PROVIDER", value: llmConfig.provider },
-                    { label: "FS_LLM_MODEL", value: llmConfig.model },
-                    { label: "FS_LLM_BASE_URL", value: llmConfig.baseUrl || "-" },
-                    { label: "FS_LLM_API_KEY", value: llmConfig.apiKey ? "已配置" : "未配置" },
+                    { label: envLabels.provider, value: llmConfig.provider },
+                    { label: envLabels.model, value: llmConfig.model },
+                    { label: envLabels.baseUrl, value: llmConfig.baseUrl || "-" },
+                    { label: envLabels.apiKey, value: llmConfig.apiKey ? "已配置" : "未配置" },
                   ].map((item) => (
                     <div key={item.label} className="flex items-center justify-between gap-4 py-1">
                       <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", fontFamily: "monospace" }}>
@@ -902,8 +1036,12 @@ function AgentConfigDialog({
   activeAgent,
   draft,
   saving,
+  testing,
   error,
+  successMessage,
+  envLabels,
   onChange,
+  onTest,
   onSave,
 }: {
   open: boolean;
@@ -911,8 +1049,12 @@ function AgentConfigDialog({
   activeAgent: Agent | undefined;
   draft: SettingsLlmConfig;
   saving: boolean;
+  testing: boolean;
   error: string | null;
+  successMessage: string | null;
+  envLabels: ReturnType<typeof getAgentEnvLabels>;
   onChange: (field: keyof SettingsLlmConfig, value: string) => void;
+  onTest: () => Promise<void>;
   onSave: () => Promise<void>;
 }) {
   return (
@@ -929,9 +1071,6 @@ function AgentConfigDialog({
           <DialogTitle style={{ fontSize: 18, color: "white" }}>
             {activeAgent ? `${activeAgent.name} 配置` : "Agent 配置"}
           </DialogTitle>
-          <DialogDescription style={{ color: "rgba(255,255,255,0.45)", lineHeight: 1.6 }}>
-            这里只保留后端实际使用的 4 个 LLM 参数，对应 `FS_LLM_*` 环境变量。
-          </DialogDescription>
         </DialogHeader>
 
         <div className="px-6 py-5 space-y-4">
@@ -949,26 +1088,40 @@ function AgentConfigDialog({
             </div>
           )}
 
+          {successMessage && (
+            <div
+              className="rounded-xl px-4 py-3"
+              style={{
+                background: "rgba(52,199,89,0.08)",
+                border: "1px solid rgba(52,199,89,0.2)",
+                color: "rgba(255,255,255,0.8)",
+                fontSize: 12,
+              }}
+            >
+              {successMessage}
+            </div>
+          )}
+
           <LlmInputField
-            label="FS_LLM_PROVIDER"
+            label={envLabels.provider}
             value={draft.provider}
             placeholder="deepseek"
             onChange={(value) => onChange("provider", value)}
           />
           <LlmInputField
-            label="FS_LLM_MODEL"
+            label={envLabels.model}
             value={draft.model}
             placeholder="deepseek-chat"
             onChange={(value) => onChange("model", value)}
           />
           <LlmInputField
-            label="FS_LLM_BASE_URL"
+            label={envLabels.baseUrl}
             value={draft.baseUrl}
             placeholder="https://api.deepseek.com/"
             onChange={(value) => onChange("baseUrl", value)}
           />
           <LlmInputField
-            label="FS_LLM_API_KEY"
+            label={envLabels.apiKey}
             value={draft.apiKey}
             placeholder="sk-..."
             onChange={(value) => onChange("apiKey", value)}
@@ -993,14 +1146,29 @@ function AgentConfigDialog({
             取消
           </button>
           <button
+            onClick={() => void onTest()}
+            disabled={saving || testing}
+            className="px-4 py-2 rounded-xl flex items-center gap-2"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "rgba(255,255,255,0.75)",
+              cursor: saving || testing ? "not-allowed" : "pointer",
+              opacity: saving || testing ? 0.7 : 1,
+            }}
+          >
+            <CheckCircle size={13} />
+            {testing ? "测试中..." : "测试连接"}
+          </button>
+          <button
             onClick={() => void onSave()}
-            disabled={saving}
+            disabled={saving || testing}
             className="px-4 py-2 rounded-xl flex items-center gap-2"
             style={{
               background: "linear-gradient(135deg, #5B72FF, #A259FF)",
               color: "white",
-              cursor: saving ? "not-allowed" : "pointer",
-              opacity: saving ? 0.7 : 1,
+              cursor: saving || testing ? "not-allowed" : "pointer",
+              opacity: saving || testing ? 0.7 : 1,
             }}
           >
             <RefreshCw size={13} />
