@@ -194,6 +194,8 @@ class LLMClient:
         messages: List[LLMMessage],
         system_prompt: Optional[str] = None,
         response_format: Optional[Dict] = None,
+        sanitize_output: bool = True,
+        use_stop_tokens: bool = True,
     ) -> LLMResponse:
         """
         调用 LLM Chat API
@@ -225,7 +227,7 @@ class LLMClient:
             "max_tokens": self.max_tokens,
             "top_p": self.top_p,
         }
-        stop_tokens = self._resolve_stop_tokens()
+        stop_tokens = self._resolve_stop_tokens() if use_stop_tokens else None
         if stop_tokens:
             kwargs["stop"] = stop_tokens
         if response_format:
@@ -253,8 +255,11 @@ class LLMClient:
         raw_content = choice.message.content or ""
 
         # 截断和清洗
-        trimmed = trim_by_eos(raw_content, EOS)
-        content = sanitize_code_output(trimmed.strip())
+        if sanitize_output:
+            trimmed = trim_by_eos(raw_content, EOS)
+            content = sanitize_code_output(trimmed.strip())
+        else:
+            content = raw_content.strip()
 
         return LLMResponse(
             content=content,
@@ -267,26 +272,22 @@ class LLMClient:
             model=response.model or self.model,
         )
 
-    async def chat_json(
+    async def chat_json_response(
         self,
         messages: List[LLMMessage],
         system_prompt: Optional[str] = None,
-    ) -> dict:
-        """
-        调用 LLM 并期望返回 JSON
-
-        会自动设置 response_format 为 json_object
-        """
+    ) -> tuple[dict, LLMResponse]:
         resp = await self.chat(
             messages=messages,
             system_prompt=system_prompt,
             response_format={"type": "json_object"},
+            sanitize_output=False,
+            use_stop_tokens=False,
         )
-        parsed = self._parse_json_with_fallbacks(resp.content)
+        parsed = self.parse_json_response(resp.content)
         if parsed is not None:
-            return parsed
+            return parsed, resp
 
-        # 最后尝试让模型修复 JSON（仅返回对象）
         repaired = await self.chat(
             messages=[
                 LLMMessage(
@@ -300,13 +301,31 @@ class LLMClient:
             ],
             system_prompt="你是 JSON 修复器。输出必须是合法 JSON 对象。",
             response_format={"type": "json_object"},
+            sanitize_output=False,
+            use_stop_tokens=False,
         )
-        parsed = self._parse_json_with_fallbacks(repaired.content)
-        if parsed is not None:
-            return parsed
+        repaired_parsed = self.parse_json_response(repaired.content)
+        if repaired_parsed is not None:
+            return repaired_parsed, repaired
 
         preview = resp.content.strip().replace("\n", "\\n")[:400]
         raise ValueError(f"LLM 返回内容无法解析为 JSON 对象，预览: {preview}")
+
+    async def chat_json(
+        self,
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+    ) -> dict:
+        """
+        调用 LLM 并期望返回 JSON
+
+        会自动设置 response_format 为 json_object
+        """
+        parsed, _ = await self.chat_json_response(
+            messages=messages,
+            system_prompt=system_prompt,
+        )
+        return parsed
 
     async def close(self):
         """关闭客户端（openai SDK 无需手动关闭）"""
@@ -335,6 +354,9 @@ class LLMClient:
             if parsed is not None:
                 return parsed
         return None
+
+    def parse_json_response(self, text: str) -> Optional[dict]:
+        return self._parse_json_with_fallbacks(text)
 
     @staticmethod
     def _try_load_json_object(text: str) -> Optional[dict]:

@@ -91,12 +91,10 @@ class RequirementAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n根据以下反馈修改：\n{feedback}"
 
-        response = await self.call_llm_response(
+        parsed, response = await self.call_llm_json_response(
             user_message,
-            expect_json=True,
             temperature=0.1,
         )
-        parsed = json.loads(response.content)
         if not isinstance(parsed, dict):
             raise ValueError("需求分析模型返回的结构不是 JSON 对象")
         return parsed, response.usage, response.model

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 """交付部署 Agent"""
 
-import json
 from .base_agent import BaseAgent, AgentInput, AgentOutput
 from typing import Dict
 from datetime import datetime
@@ -17,9 +16,15 @@ class DeliveryAgent(BaseAgent):
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         code_files = input_data.context.get("generated_code", {})
         review_report = input_data.context.get("review_report", "")
+        project_summary = input_data.context.get("project_summary", "")
         feedback = input_data.human_feedback
 
-        delivery, token_usage, model = await self._llm_prepare_delivery(code_files, review_report, feedback)
+        delivery, token_usage, model = await self._llm_prepare_delivery(
+            code_files,
+            review_report,
+            project_summary,
+            feedback,
+        )
 
         return AgentOutput(
             success=True,
@@ -41,10 +46,12 @@ class DeliveryAgent(BaseAgent):
         self,
         code_files: Dict[str, str],
         review_report: str,
+        project_summary: str,
         feedback: str | None,
     ) -> tuple[dict, dict[str, int] | None, str]:
         """调用 LLM 准备交付"""
         file_list = "\n".join(f"- `{p}`" for p in code_files)
+        package_json = code_files.get("package.json", "")
 
         user_message = f"""请准备代码交付所需的信息。
 
@@ -54,23 +61,32 @@ class DeliveryAgent(BaseAgent):
 评审报告：
 {review_report[:500]}
 
+项目摘要：
+{project_summary or "未提供"}
+
+package.json（如存在）：
+{package_json[:1500] or "未提供"}
+
 请输出 JSON 格式（只输出 JSON）：
 1. pr_title: PR 标题
 2. pr_description: PR 描述（Markdown 格式，包含变更说明和验证步骤）
 3. branch: 功能分支名
 4. commit_message: Git 提交信息
 5. deployment_command: 部署命令
+
+约束：
+- deployment_command 必须尽量基于 package.json 脚本或已知文件推断
+- 若无法可靠判断部署命令，请输出 "manual verification required"
 """
 
         if feedback:
             user_message += f"\n\n根据以下反馈调整：\n{feedback}"
 
-        llm_response = await self.call_llm_response(user_message, expect_json=True)
-        response = llm_response.content
         try:
-            parsed = json.loads(response)
-        except json.JSONDecodeError:
+            parsed, llm_response = await self.call_llm_json_response(user_message)
+        except ValueError:
             parsed = {}
+            llm_response = None
         parsed["changes"] = len(code_files)
         parsed["files_changed"] = list(code_files.keys())
         parsed["pr_number"] = parsed.get("pr_number", 1)
@@ -79,8 +95,8 @@ class DeliveryAgent(BaseAgent):
         parsed.setdefault("pr_description", "基于 FlowState 流水线自动生成的代码。")
         parsed.setdefault("branch", "feature/auto-gen")
         parsed.setdefault("commit_message", "feat: auto-generate code via FlowState")
-        parsed.setdefault("deployment_command", "docker-compose up -d")
-        return parsed, llm_response.usage, llm_response.model
+        parsed.setdefault("deployment_command", "manual verification required")
+        return parsed, getattr(llm_response, "usage", None), getattr(llm_response, "model", self.model_name)
 
     def _format_delivery(self, delivery: dict) -> str:
         lines = [

@@ -84,6 +84,43 @@ def _append_usage_log(pipeline: Pipeline, stage: StageNode) -> None:
     )
 
 
+def _reset_stage_runtime(stage: StageNode, *, status: StageStatus = StageStatus.PENDING) -> None:
+    stage.status = status
+    stage.agent_output = None
+    stage.prompt_tokens = None
+    stage.completion_tokens = None
+    stage.total_tokens = None
+    stage.model_name = None
+    stage.started_at = None
+    stage.completed_at = None
+    stage.human_approval = None
+
+
+def _build_testing_revision_feedback(stage: StageNode, reason: str) -> str:
+    report = ""
+    if isinstance(stage.agent_output, dict):
+        report = str(stage.agent_output.get("report") or "").strip()
+        test_results = stage.agent_output.get("test_results")
+        if isinstance(test_results, dict):
+            errors = test_results.get("errors") or []
+            error_lines = [str(item).strip() for item in errors if str(item).strip()]
+        else:
+            error_lines = []
+    else:
+        error_lines = []
+
+    sections = [
+        "测试阶段未通过，请根据以下信息修复代码并重新生成相关文件：",
+    ]
+    if reason.strip():
+        sections.extend(["", "人工反馈：", reason.strip()])
+    if error_lines:
+        sections.extend(["", "测试/执行错误：", *[f"- {line}" for line in error_lines[:12]]])
+    if report:
+        sections.extend(["", "测试报告：", report[:4000]])
+    return "\n".join(sections).strip()
+
+
 class PipelineValidationError(ValueError):
     """Raised when incoming pipeline creation data is invalid."""
 
@@ -792,25 +829,50 @@ class PipelineService:
             raise ValueError("当前阶段不处于待审批状态")
 
         now = datetime.now()
+        stage.retry_count += 1
         stage.human_approval = ApproveAction.REJECT
         stage.human_feedback = reason
-        stage.agent_output = None
-        stage.prompt_tokens = None
-        stage.completion_tokens = None
-        stage.total_tokens = None
-        stage.model_name = None
         stage.status = StageStatus.REJECTED
-        stage.started_at = None
-        stage.completed_at = None
-        stage.retry_count += 1
-        pipeline.updated_at = now
-        pipeline.status = PipelineStatus.RUNNING
-        pipeline.logs.append(f"[{_timestamp()}] 人工审批拒绝: {stage.stage_type.value}")
-        if reason:
-            pipeline.logs.append(f"[{_timestamp()}] 拒绝原因: {reason}")
-        pipeline.logs.append(
-            f"[{_timestamp()}] Stage 状态重置为 PENDING，并提交后台 Agent 重新执行..."
-        )
+
+        if stage.stage_type == StageType.TESTING:
+            coding_index = next(
+                (index for index, item in enumerate(pipeline.stages) if item.stage_type == StageType.CODING),
+                None,
+            )
+            if coding_index is None:
+                raise PipelineValidationError("未找到代码生成阶段，无法回退")
+
+            coding_stage = pipeline.stages[coding_index]
+            coding_stage.retry_count += 1
+            coding_stage.human_feedback = _build_testing_revision_feedback(stage, reason)
+            for reset_index in range(coding_index, len(pipeline.stages)):
+                reset_stage = pipeline.stages[reset_index]
+                if reset_index != coding_index:
+                    reset_stage.human_feedback = None
+                _reset_stage_runtime(reset_stage)
+            pipeline.context.test_report = None
+            pipeline.context.review_report = None
+            pipeline.context.delivery_result = None
+            pipeline.updated_at = now
+            pipeline.status = PipelineStatus.RUNNING
+            pipeline.logs.append(f"[{_timestamp()}] 人工审批拒绝: {stage.stage_type.value}")
+            if reason:
+                pipeline.logs.append(f"[{_timestamp()}] 拒绝原因: {reason}")
+            pipeline.logs.append(
+                f"[{_timestamp()}] 测试阶段驳回后已回退到 coding，准备重新生成代码并再次执行测试"
+            )
+        else:
+            _reset_stage_runtime(stage, status=StageStatus.REJECTED)
+            stage.human_feedback = reason
+            stage.human_approval = ApproveAction.REJECT
+            pipeline.updated_at = now
+            pipeline.status = PipelineStatus.RUNNING
+            pipeline.logs.append(f"[{_timestamp()}] 人工审批拒绝: {stage.stage_type.value}")
+            if reason:
+                pipeline.logs.append(f"[{_timestamp()}] 拒绝原因: {reason}")
+            pipeline.logs.append(
+                f"[{_timestamp()}] Stage 状态重置为 PENDING，并提交后台 Agent 重新执行..."
+            )
 
         self._reset_git_to_anchor(pipeline, stage_index)
         await self.state_store.save(pipeline)
@@ -825,7 +887,18 @@ class PipelineService:
             return
         if stage_index < 0 or stage_index >= len(pipeline.stages):
             return
+
+        target_stage_index = stage_index
         stage = pipeline.stages[stage_index]
+        if stage.stage_type == StageType.TESTING:
+            coding_index = next(
+                (index for index, item in enumerate(pipeline.stages) if item.stage_type == StageType.CODING),
+                None,
+            )
+            if coding_index is not None:
+                target_stage_index = coding_index
+                stage = pipeline.stages[target_stage_index]
+
         stage.status = StageStatus.RUNNING
         pipeline.status = PipelineStatus.RUNNING
         pipeline.updated_at = datetime.now()
@@ -834,7 +907,7 @@ class PipelineService:
         )
         await self.state_store.save(pipeline)
         try:
-            await self._run_stage_by_index(pipeline, stage_index)
+            await self._run_stage_by_index(pipeline, target_stage_index)
         except Exception:
             pass
 

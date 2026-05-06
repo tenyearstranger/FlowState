@@ -129,12 +129,10 @@ class SolutionAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n请根据以下反馈修订方案：\n{feedback}"
 
-        response = await self.call_llm_response(
+        parsed, response = await self.call_llm_json_response(
             user_message,
-            expect_json=True,
             temperature=0.1,
         )
-        parsed = json.loads(response.content)
         if not isinstance(parsed, dict):
             raise ValueError("方案设计模型返回的结构不是 JSON 对象")
         return parsed, response.usage, response.model

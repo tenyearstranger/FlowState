@@ -89,7 +89,12 @@ async def reject_checkpoint(
     stage_type = updated_pipeline.stages[stage_index].stage_type
     updated_checkpoint = to_frontend_checkpoint(updated_pipeline, stage_type, stage_index)
     if updated_checkpoint is None:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkpoint update failed")
+        updated_checkpoint = current_checkpoint.model_copy(
+            update={
+                "status": "rejected",
+                "rejectReason": payload.reason,
+            }
+        )
 
     asyncio.create_task(service.retry_stage(pipeline.id, stage_index))
 

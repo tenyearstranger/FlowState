@@ -105,6 +105,8 @@ class BaseAgent(ABC):
         system_prompt: Optional[str] = None,
         expect_json: bool = False,
         temperature: Optional[float] = None,
+        sanitize_output: bool = True,
+        use_stop_tokens: bool = True,
     ) -> LLMResponse:
         """
         调用 LLM 的统一入口
@@ -134,6 +136,29 @@ class BaseAgent(ABC):
             messages=messages,
             system_prompt=actual_system_prompt,
             response_format={"type": "json_object"} if expect_json else None,
+            sanitize_output=sanitize_output,
+            use_stop_tokens=use_stop_tokens,
+        )
+
+    async def call_llm_json_response(
+        self,
+        user_message: str,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> tuple[dict, LLMResponse]:
+        client = self._get_llm_client()
+        messages = [
+            LLMMessage(role="user", content=user_message),
+        ]
+
+        actual_system_prompt = system_prompt or self.system_prompt
+        temp = temperature if temperature is not None else self.temperature
+        if temp != client.temperature:
+            client.temperature = temp
+
+        return await client.chat_json_response(
+            messages=messages,
+            system_prompt=actual_system_prompt,
         )
 
     async def call_llm(

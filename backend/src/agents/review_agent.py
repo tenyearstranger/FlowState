@@ -16,10 +16,15 @@ class ReviewAgent(BaseAgent):
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         code_files = input_data.context.get("generated_code", {})
         test_report = input_data.context.get("test_report", "")
-        code_diff = input_data.context.get("code_diff", "")
+        project_summary = input_data.context.get("project_summary", "")
         feedback = input_data.human_feedback
 
-        review, token_usage, model = await self._llm_review(code_files, test_report, code_diff, feedback)
+        review, token_usage, model = await self._llm_review(
+            code_files,
+            test_report,
+            project_summary,
+            feedback,
+        )
 
         issues = review.get("issues", [])
         critical = sum(1 for i in issues if i["severity"] == "critical")
@@ -43,7 +48,7 @@ class ReviewAgent(BaseAgent):
         self,
         code_files: Dict[str, str],
         test_report: str,
-        code_diff: str,
+        project_summary: str,
         feedback: str | None,
     ) -> tuple[dict, dict[str, int] | None, str]:
         """调用 LLM 进行代码评审"""
@@ -52,16 +57,16 @@ class ReviewAgent(BaseAgent):
             for path, content in code_files.items()
         )
 
-        user_message = f"""请基于以下代码变更内容进行全面评审。
-
-代码 diff：
-{code_diff[:12000] or "未提供 diff，请回退到文件摘要评审。"}
+        user_message = f"""请对以下代码进行全面评审。
 
 代码文件：
 {code_summary}
 
 测试报告：
 {test_report}
+
+项目摘要：
+{project_summary or "未提供"}
 
 请输出 JSON 格式的评审报告，包含以下字段：
 1. score: 0-100 的评分
@@ -72,24 +77,28 @@ class ReviewAgent(BaseAgent):
 
 严重级别：critical / high / medium / low
 
+约束：
+- 只报告能从给定代码、测试报告、项目摘要中直接推断的问题
+- 如果证据不足，不要虚构具体 API、构建配置或安全漏洞
+- line 字段无法确定时填 0
+
 只输出 JSON，不要其他内容。
 """
 
         if feedback:
             user_message += f"\n\n根据以下反馈调整评审：\n{feedback}"
 
-        llm_response = await self.call_llm_response(user_message, expect_json=True)
-        response = llm_response.content
         try:
-            return json.loads(response), llm_response.usage, llm_response.model
-        except json.JSONDecodeError:
+            parsed, llm_response = await self.call_llm_json_response(user_message)
+            return parsed, llm_response.usage, llm_response.model
+        except ValueError:
             return {
-                "score": 70,
-                "summary": "评审完成（解析回退）",
-                "strengths": ["代码结构完整"],
-                "issues": [{"file": "unknown", "line": 0, "severity": "medium", "message": "请人工审查代码质量"}],
-                "suggestions": ["建议人工审查"],
-            }, llm_response.usage, llm_response.model
+                "score": 0,
+                "summary": "评审结果解析失败，无法给出可靠结论",
+                "strengths": [],
+                "issues": [{"file": "unknown", "line": 0, "severity": "high", "message": "评审输出无法解析，请人工复核"}],
+                "suggestions": ["重新执行评审或人工审核"],
+            }, None, self.model_name
 
     def _format_review(self, review: dict) -> str:
         lines = [

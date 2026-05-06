@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+import tempfile
 
 from .base_agent import BaseAgent, AgentInput, AgentOutput
 
@@ -23,12 +24,14 @@ class CodeAgent(BaseAgent):
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         solution_doc = input_data.context.get("solution_doc", "")
         structured_solution = input_data.context.get("solution_structured", {}) or {}
+        existing_generated_code = input_data.context.get("generated_code", {}) or {}
         req_doc = input_data.context.get("requirement_doc", "")
         feedback = input_data.human_feedback
 
         files, token_usage, model = await self._llm_generate_code(
             solution=solution_doc,
             structured_solution=structured_solution,
+            existing_generated_code=existing_generated_code,
             req=req_doc,
             feedback=feedback,
         )
@@ -59,6 +62,7 @@ class CodeAgent(BaseAgent):
         *,
         solution: str,
         structured_solution: dict[str, Any],
+        existing_generated_code: dict[str, str],
         req: str,
         feedback: str | None,
     ) -> tuple[dict[str, str], dict[str, int] | None, str]:
@@ -73,17 +77,30 @@ class CodeAgent(BaseAgent):
         if not target_files:
             raise ValueError("file_plan 中没有可生成的文件")
 
-        generated_files: dict[str, str] = {}
-        generated_paths: list[str] = []
+        reusable_files = {
+            path: content
+            for path, content in existing_generated_code.items()
+            if any(item["path"] == path for item in target_files)
+        }
+        generated_files: dict[str, str] = dict(reusable_files)
+        generated_paths: list[str] = list(generated_files.keys())
         usage_totals = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
         }
         model_name = self.model_name
-        total_batches = len(list(self._chunk_file_plan(target_files, self.BATCH_SIZE)))
+        pending_targets = [
+            item for item in target_files
+            if item["path"] not in generated_files
+        ]
+        if not pending_targets:
+            final_usage = usage_totals if any(usage_totals.values()) else None
+            return self._validate_required_files(generated_files, target_files), final_usage, model_name
 
-        for batch_index, batch in enumerate(self._chunk_file_plan(target_files, self.BATCH_SIZE), start=1):
+        total_batches = len(list(self._chunk_file_plan(pending_targets, self.BATCH_SIZE)))
+
+        for batch_index, batch in enumerate(self._chunk_file_plan(pending_targets, self.BATCH_SIZE), start=1):
             batch_files: dict[str, str] = {}
             pending_batch = list(batch)
 
@@ -98,6 +115,7 @@ class CodeAgent(BaseAgent):
                     full_file_plan=file_plan,
                     current_batch=pending_batch,
                     generated_paths=generated_paths,
+                    reusable_paths=list(reusable_files.keys()),
                     batch_index=batch_index,
                     total_batches=total_batches,
                     retry_index=retry_index,
@@ -164,6 +182,7 @@ class CodeAgent(BaseAgent):
         full_file_plan: list[dict[str, Any]],
         current_batch: list[dict[str, Any]],
         generated_paths: list[str],
+        reusable_paths: list[str],
         batch_index: int,
         total_batches: int,
         retry_index: int,
@@ -198,6 +217,9 @@ class CodeAgent(BaseAgent):
 ## 已经生成完成的文件路径
 {json.dumps(generated_paths, ensure_ascii=False, indent=2)}
 
+## 可直接复用、无需重复生成的文件
+{json.dumps(reusable_paths, ensure_ascii=False, indent=2)}
+
 请按以下标签格式返回当前批次的每个文件：
 <file path="相对文件路径">
 <summary>该文件的作用</summary>
@@ -209,6 +231,7 @@ class CodeAgent(BaseAgent):
 输出约束：
 - 不要输出 Markdown，不要解释，不要添加额外前后缀
 - 只返回当前批次要求生成的文件，不要省略
+- 对于“可直接复用、无需重复生成的文件”，不要重复输出
 - 路径必须与当前批次 file_plan 对齐，不能返回 output.txt 之类的兜底文件
 - 文件内容必须是完整实现，不能只写 TODO 或伪代码
 - 优先使用 `content` 标签返回纯文本；仅在你无法直接输出文本时才使用 `content_base64`
@@ -327,7 +350,7 @@ class CodeAgent(BaseAgent):
         return files
 
     def _build_parse_error(self, response_text: str) -> ValueError:
-        debug_path = Path("/tmp/flowstate-codeagent-last-response.txt")
+        debug_path = Path(tempfile.gettempdir()) / "flowstate-codeagent-last-response.txt"
         debug_path.write_text(response_text, encoding="utf-8")
         preview = response_text.strip().replace("\n", "\\n")[:400]
         return ValueError(
