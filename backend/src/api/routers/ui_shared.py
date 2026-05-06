@@ -380,6 +380,7 @@ def to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> 
         StageStatus.WAITING_HUMAN,
         StageStatus.APPROVED,
         StageStatus.REJECTED,
+        StageStatus.PENDING,
     }:
         return None
 
@@ -397,9 +398,9 @@ def to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> 
         pipelineName=pipeline.title or pipeline.context.requirement_raw[:60],
         stage=stage_name,
         stageIndex=index,
-        status=(
+                status=(
             "pending"
-            if stage_node.status == StageStatus.WAITING_HUMAN
+            if stage_node.status in {StageStatus.WAITING_HUMAN, StageStatus.PENDING}
             else "approved"
             if stage_node.status == StageStatus.APPROVED
             else "rejected"

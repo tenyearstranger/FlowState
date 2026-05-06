@@ -224,22 +224,6 @@ class PipelineService:
             ]
 
         if start_immediately and pipeline.stages:
-            now = datetime.now()
-            pipeline.status = PipelineStatus.RUNNING
-            pipeline.updated_at = now
-            pipeline.stages[0].status = StageStatus.RUNNING
-            pipeline.stages[0].started_at = now
-            pipeline.stages[0].agent_output = {
-                "text": (
-                    "## 已接收任务\n\n"
-                    f"项目目录：{normalized_project_path or '未提供'}\n\n"
-                    f"需求描述：{requirement}\n\n"
-                    f"{project_summary or '未执行项目目录扫描。'}"
-                )
-            }
-            if not any("RequirementsAgent 正在分析需求" in item for item in pipeline.logs):
-                pipeline.logs.append(f"[{_timestamp()}] RequirementsAgent 正在分析需求...")
-
             await self._run_requirement_analysis(pipeline)
 
         await self.state_store.save(pipeline)
@@ -436,16 +420,38 @@ class PipelineService:
         now = datetime.now()
         stage.human_approval = ApproveAction.REJECT
         stage.human_feedback = reason
-        stage.status = StageStatus.REJECTED
-        stage.completed_at = stage.completed_at or now
+        stage.agent_output = None
+        stage.prompt_tokens = None
+        stage.completion_tokens = None
+        stage.total_tokens = None
+        stage.model_name = None
+        stage.status = StageStatus.PENDING
+        stage.started_at = None
+        stage.completed_at = None
+        stage.retry_count += 1
         pipeline.updated_at = now
-        pipeline.status = PipelineStatus.WAITING_HUMAN
+        pipeline.status = PipelineStatus.RUNNING
         pipeline.logs.append(f"[{_timestamp()}] 人工审批拒绝: {stage.stage_type.value}")
         if reason:
             pipeline.logs.append(f"[{_timestamp()}] 拒绝原因: {reason}")
+        pipeline.logs.append(
+            f"[{_timestamp()}] Agent 正在根据反馈重新执行阶段 {stage.stage_type.value}..."
+        )
 
         await self.state_store.save(pipeline)
         return pipeline
+
+    async def retry_stage(self, pipeline_id: str, stage_index: int) -> None:
+        """后台重新执行指定阶段（由 reject/retry 在后台调用）。"""
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            return
+        if stage_index < 0 or stage_index >= len(pipeline.stages):
+            return
+        try:
+            await self._run_stage_by_index(pipeline, stage_index)
+        except Exception:
+            pass
 
     async def _run_requirement_analysis(self, pipeline: Pipeline) -> None:
         """执行需求分析阶段，生成第一版结构化需求文档。"""
@@ -453,6 +459,19 @@ class PipelineService:
             return
 
         requirement_stage = pipeline.stages[0]
+        now = datetime.now()
+        requirement_stage.status = StageStatus.RUNNING
+        requirement_stage.started_at = now
+        requirement_stage.agent_output = {
+            "text": (
+                "## 正在分析需求\n\n"
+                "已接收任务，正在根据需求描述和项目上下文进行分析。"
+            )
+        }
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = now
+        pipeline.logs.append(f"[{_timestamp()}] RequirementsAgent 正在分析需求...")
+
         try:
             if self.engine is not None and StageType.REQUIREMENT in getattr(self.engine, "agents", {}):
                 agent = self.engine.agents[StageType.REQUIREMENT]
@@ -462,6 +481,7 @@ class PipelineService:
             input_data = AgentInput(
                 task_description="执行阶段: requirement_analysis",
                 context=pipeline.context.model_dump(),
+                human_feedback=requirement_stage.human_feedback,
             )
             output = await agent.execute(input_data)
             now = datetime.now()
@@ -496,12 +516,14 @@ class PipelineService:
                 )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 需求分析进入人工确认，等待审批")
+            await self.state_store.save(pipeline)
         except Exception as error:
             requirement_stage.status = StageStatus.FAILED
             requirement_stage.completed_at = datetime.now()
             pipeline.status = PipelineStatus.FAILED
             pipeline.error = f"[requirement_analysis] {error}"
             pipeline.logs.append(f"[{_timestamp()}] 需求分析失败: {error}")
+            await self.state_store.save(pipeline)
             raise
 
     async def _run_stage_by_index(self, pipeline: Pipeline, stage_index: int) -> None:

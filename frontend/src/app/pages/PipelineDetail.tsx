@@ -241,7 +241,7 @@ export function PipelineDetail() {
   const navigate = useNavigate();
   const [selectedStage, setSelectedStage] = useState("");
   const [showLogs, setShowLogs] = useState(true);
-  const [logCount, setLogCount] = useState(0);
+  const [showProjectContext, setShowProjectContext] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<"pause" | "resume" | "cancel" | "retry" | null>(null);
   const [pathActionMessage, setPathActionMessage] = useState<string | null>(null);
@@ -297,34 +297,9 @@ export function PipelineDetail() {
     }
   }, [pipeline, selectedStage]);
 
-  useEffect(() => {
-    if (!pipeline) {
-      return;
-    }
-
-    if (pipeline.status === "running") {
-      setLogCount(Math.min(logs.length, 8));
-      return;
-    }
-
-    setLogCount(logs.length);
-  }, [logs.length, pipeline]);
-
-  useEffect(() => {
-    if (pipeline?.status !== "running" || logCount >= logs.length) {
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setLogCount((count) => Math.min(count + 1, logs.length));
-    }, 1200);
-
-    return () => clearInterval(interval);
-  }, [logCount, logs.length, pipeline?.status]);
-
-  useEffect(() => {
+    useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logCount]);
+  }, [logs]);
 
   const syncPipeline = async () => {
     pipelineQuery.reload();
@@ -548,212 +523,224 @@ export function PipelineDetail() {
 
       {(pipeline.projectPath || pipeline.projectSummary || pipeline.requirementDocPath || pipeline.solutionDocPath) && (
         <div
-          className="mx-6 mt-5 rounded-2xl p-5 flex-shrink-0"
+          className="mx-6 mt-5 rounded-2xl flex-shrink-0 overflow-hidden"
           style={{
             background: "rgba(255,255,255,0.025)",
             border: "1px solid rgba(255,255,255,0.07)",
           }}
         >
-          <div className="flex items-center gap-2 mb-4">
+          <button
+            onClick={() => setShowProjectContext(!showProjectContext)}
+            className="flex items-center gap-2 w-full px-5 py-3 hover:bg-white/[0.02] transition-colors"
+            style={{ background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+          >
             <FileSearch size={13} style={{ color: "rgba(255,255,255,0.45)" }} />
-            <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>
+            <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)", flex: 1 }}>
               项目上下文
             </span>
-          </div>
-
-          {pipeline.projectPath && (
-            <div className="mb-4">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div
-                  className="flex items-center gap-2"
-                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-                >
-                  <FolderOpen size={11} />
-                  项目本地目录
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handlePathAction(pipeline.projectPath, "reveal", "项目目录")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                    style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      color: "rgba(255,255,255,0.62)",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <FolderOpen size={11} />
-                    打开目录
-                  </button>
-                </div>
-              </div>
-              <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: "rgba(0,0,0,0.22)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.72)",
-                  fontSize: 12,
-                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                  wordBreak: "break-all",
-                }}
-              >
-                {pipeline.projectPath}
-              </div>
-            </div>
-          )}
-
-          {pipeline.projectSummary && (
-            <div>
-              <div
-                className="flex items-center gap-2 mb-2"
-                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-              >
-                <Terminal size={11} />
-                目录扫描摘要
-              </div>
-              <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: "rgba(0,0,0,0.22)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.66)",
-                  fontSize: 12,
-                  lineHeight: 1.7,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {pipeline.projectSummary}
-              </div>
-            </div>
-          )}
-
-          {pipeline.requirementDocPath && (
-            <div className="mt-4">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div
-                  className="flex items-center gap-2"
-                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-                >
-                  <Terminal size={11} />
-                  需求文档落盘路径
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handlePathAction(pipeline.requirementDocPath, "open", "需求文档")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                    style={{
-                      background: "rgba(91,114,255,0.08)",
-                      border: "1px solid rgba(91,114,255,0.18)",
-                      color: "#A0ABFF",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <ExternalLink size={11} />
-                    打开文件
-                  </button>
-                  <button
-                    onClick={() => handlePathAction(pipeline.requirementDocPath, "reveal", "需求文档")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                    style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      color: "rgba(255,255,255,0.62)",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <FolderOpen size={11} />
-                    定位文件
-                  </button>
-                </div>
-              </div>
-              <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: "rgba(0,0,0,0.22)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.72)",
-                  fontSize: 12,
-                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                  wordBreak: "break-all",
-                }}
-              >
-                {pipeline.requirementDocPath}
-              </div>
-            </div>
-          )}
-
-          {pipeline.solutionDocPath && (
-            <div className="mt-4">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div
-                  className="flex items-center gap-2"
-                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-                >
-                  <Terminal size={11} />
-                  方案文档落盘路径
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handlePathAction(pipeline.solutionDocPath, "open", "方案文档")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                    style={{
-                      background: "rgba(162,89,255,0.08)",
-                      border: "1px solid rgba(162,89,255,0.18)",
-                      color: "#C7A7FF",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <ExternalLink size={11} />
-                    打开文件
-                  </button>
-                  <button
-                    onClick={() => handlePathAction(pipeline.solutionDocPath, "reveal", "方案文档")}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
-                    style={{
-                      background: "rgba(255,255,255,0.04)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      color: "rgba(255,255,255,0.62)",
-                      fontSize: 11,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <FolderOpen size={11} />
-                    定位文件
-                  </button>
-                </div>
-              </div>
-              <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: "rgba(0,0,0,0.22)",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  color: "rgba(255,255,255,0.72)",
-                  fontSize: 12,
-                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                  wordBreak: "break-all",
-                }}
-              >
-                {pipeline.solutionDocPath}
-              </div>
-            </div>
-          )}
-
-          {pathActionMessage && (
-            <div
-              className="mt-4 rounded-xl px-4 py-3"
+            <ChevronDown
+              size={12}
               style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.08)",
-                color: "rgba(255,255,255,0.72)",
-                fontSize: 12,
+                color: "rgba(255,255,255,0.3)",
+                transform: showProjectContext ? "rotate(180deg)" : "none",
+                transition: "transform 0.2s",
               }}
-            >
-              {pathActionMessage}
+            />
+          </button>
+
+          {showProjectContext && (
+            <div className="px-5 pb-5 space-y-4">
+              {pipeline.projectPath && (
+                <div>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div
+                      className="flex items-center gap-2"
+                      style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                    >
+                      <FolderOpen size={11} />
+                      项目本地目录
+                    </div>
+                    <button
+                      onClick={() => handlePathAction(pipeline.projectPath, "reveal", "项目目录")}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                      style={{
+                        background: "rgba(255,255,255,0.04)",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        color: "rgba(255,255,255,0.62)",
+                        fontSize: 11,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <FolderOpen size={11} />
+                      打开目录
+                    </button>
+                  </div>
+                  <div
+                    className="rounded-xl px-4 py-2.5"
+                    style={{
+                      background: "rgba(0,0,0,0.22)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.72)",
+                      fontSize: 12,
+                      fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {pipeline.projectPath}
+                  </div>
+                </div>
+              )}
+
+              {pipeline.projectSummary && (
+                <div>
+                  <div
+                    className="flex items-center gap-2 mb-2"
+                    style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                  >
+                    <Terminal size={11} />
+                    目录扫描摘要
+                  </div>
+                  <div
+                    className="rounded-xl px-4 py-2.5"
+                    style={{
+                      background: "rgba(0,0,0,0.22)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                      color: "rgba(255,255,255,0.66)",
+                      fontSize: 12,
+                      lineHeight: 1.7,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {pipeline.projectSummary}
+                  </div>
+                </div>
+              )}
+
+              {(pipeline.requirementDocPath || pipeline.solutionDocPath) && (
+                <div className="flex gap-4">
+                  {pipeline.requirementDocPath && (
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span
+                          style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                        >
+                          需求文档
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handlePathAction(pipeline.requirementDocPath, "open", "需求文档")}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                            style={{
+                              background: "rgba(91,114,255,0.08)",
+                              border: "1px solid rgba(91,114,255,0.18)",
+                              color: "#A0ABFF",
+                              fontSize: 10,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <ExternalLink size={10} />
+                            打开
+                          </button>
+                          <button
+                            onClick={() => handlePathAction(pipeline.requirementDocPath, "reveal", "需求文档")}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                            style={{
+                              background: "rgba(255,255,255,0.04)",
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              color: "rgba(255,255,255,0.62)",
+                              fontSize: 10,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <FolderOpen size={10} />
+                            定位
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        className="rounded-xl px-3 py-2 truncate"
+                        style={{
+                          background: "rgba(0,0,0,0.22)",
+                          border: "1px solid rgba(255,255,255,0.06)",
+                          color: "rgba(255,255,255,0.72)",
+                          fontSize: 12,
+                          fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                        }}
+                      >
+                        {pipeline.requirementDocPath}
+                      </div>
+                    </div>
+                  )}
+
+                  {pipeline.solutionDocPath && (
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <span
+                          style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                        >
+                          方案文档
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handlePathAction(pipeline.solutionDocPath, "open", "方案文档")}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                            style={{
+                              background: "rgba(162,89,255,0.08)",
+                              border: "1px solid rgba(162,89,255,0.18)",
+                              color: "#C7A7FF",
+                              fontSize: 10,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <ExternalLink size={10} />
+                            打开
+                          </button>
+                          <button
+                            onClick={() => handlePathAction(pipeline.solutionDocPath, "reveal", "方案文档")}
+                            className="flex items-center gap-1 px-2 py-1 rounded-lg"
+                            style={{
+                              background: "rgba(255,255,255,0.04)",
+                              border: "1px solid rgba(255,255,255,0.08)",
+                              color: "rgba(255,255,255,0.62)",
+                              fontSize: 10,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <FolderOpen size={10} />
+                            定位
+                          </button>
+                        </div>
+                      </div>
+                      <div
+                        className="rounded-xl px-3 py-2 truncate"
+                        style={{
+                          background: "rgba(0,0,0,0.22)",
+                          border: "1px solid rgba(255,255,255,0.06)",
+                          color: "rgba(255,255,255,0.72)",
+                          fontSize: 12,
+                          fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                        }}
+                      >
+                        {pipeline.solutionDocPath}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {pathActionMessage && (
+                <div
+                  className="rounded-xl px-4 py-3"
+                  style={{
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.72)",
+                    fontSize: 12,
+                  }}
+                >
+                  {pathActionMessage}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -959,10 +946,10 @@ export function PipelineDetail() {
                     {logsQuery.error}
                   </div>
                 )}
-                {logs.slice(0, logCount).map((log, index) => (
+                {logs.map((log, index) => (
                   <motion.div
                     key={`${index}-${log}`}
-                    initial={index >= logCount - 1 ? { opacity: 0 } : { opacity: 1 }}
+                    initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     style={{
                       fontSize: 11,

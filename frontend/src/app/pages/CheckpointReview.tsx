@@ -452,7 +452,7 @@ export function CheckpointReview() {
                     >
                       {actionDone === "approved"
                         ? "已通过审批，Pipeline 将继续下一阶段"
-                        : "已拒绝，Agent 将携带反馈重新执行此阶段"}
+                        : "已拒绝，可在流水线详情页点击「重试」重新执行此阶段"}
                     </span>
                   </motion.div>
                 )}

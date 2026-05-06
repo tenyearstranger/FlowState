@@ -46,7 +46,8 @@ async def approve_checkpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found")
 
     pipeline, stage_index, current_checkpoint = persisted
-    if current_checkpoint.status != "pending":
+    stage_node = pipeline.stages[stage_index]
+    if stage_node.status.value != "waiting_human":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
 
     updated_pipeline = await service.approve_stage(pipeline.id, stage_index)
@@ -80,7 +81,8 @@ async def reject_checkpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found")
 
     pipeline, stage_index, current_checkpoint = persisted
-    if current_checkpoint.status != "pending":
+    stage_node = pipeline.stages[stage_index]
+    if stage_node.status.value != "waiting_human":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
 
     updated_pipeline = await service.reject_stage(pipeline.id, stage_index, payload.reason)
@@ -89,11 +91,13 @@ async def reject_checkpoint(
     if updated_checkpoint is None:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Checkpoint update failed")
 
+    asyncio.create_task(service.retry_stage(pipeline.id, stage_index))
+
     ACTIVITIES.insert(
         0,
         FrontendActivityItem(
             time="刚刚",
-            text=f"{updated_pipeline.id} · {updated_checkpoint.stage} 检查点被拒绝，等待重新处理",
+            text=f"{updated_pipeline.id} · {updated_checkpoint.stage} 检查点已拒绝，Agent 正在重新处理",
             type="warning",
         ),
     )
