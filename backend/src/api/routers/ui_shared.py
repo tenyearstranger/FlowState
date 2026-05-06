@@ -376,11 +376,13 @@ def to_frontend_pipeline(pipeline: Pipeline) -> FrontendPipeline:
 
 def to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> FrontendCheckpoint | None:
     stage_node = pipeline.stages[index]
+    # 在前端界面中，只有明确处于待审批（waiting_human）
+    # 或者已经有了审批结论（approved/rejected）的才算作一个“检查点”
+    # 如果阶段还在 PENDING 或 RUNNING 状态，说明它是一个“未来”或“当前正在执行”的阶段，不应计入统计
     if stage_node.status not in {
         StageStatus.WAITING_HUMAN,
         StageStatus.APPROVED,
         StageStatus.REJECTED,
-        StageStatus.PENDING,
     }:
         return None
 
@@ -399,12 +401,12 @@ def to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> 
         stage=stage_name,
         stageIndex=index,
                 status=(
-            "pending"
-            if stage_node.status in {StageStatus.WAITING_HUMAN, StageStatus.PENDING}
-            else "approved"
-            if stage_node.status == StageStatus.APPROVED
-            else "rejected"
-        ),
+                    "pending"
+                    if stage_node.status == StageStatus.WAITING_HUMAN
+                    else "approved"
+                    if stage_node.status == StageStatus.APPROVED
+                    else "rejected"
+                ),
         createdAt=created_at,
         output=extract_stage_output(pipeline, stage, stage_node.agent_output) or "",
         rejectReason=stage_node.human_feedback,

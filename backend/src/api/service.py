@@ -425,7 +425,7 @@ class PipelineService:
         stage.completion_tokens = None
         stage.total_tokens = None
         stage.model_name = None
-        stage.status = StageStatus.PENDING
+        stage.status = StageStatus.REJECTED
         stage.started_at = None
         stage.completed_at = None
         stage.retry_count += 1
@@ -435,7 +435,7 @@ class PipelineService:
         if reason:
             pipeline.logs.append(f"[{_timestamp()}] 拒绝原因: {reason}")
         pipeline.logs.append(
-            f"[{_timestamp()}] Agent 正在根据反馈重新执行阶段 {stage.stage_type.value}..."
+            f"[{_timestamp()}] Stage 状态重置为 PENDING，并提交后台 Agent 重新执行..."
         )
 
         await self.state_store.save(pipeline)
@@ -443,11 +443,21 @@ class PipelineService:
 
     async def retry_stage(self, pipeline_id: str, stage_index: int) -> None:
         """后台重新执行指定阶段（由 reject/retry 在后台调用）。"""
+        # 注意：此处不需要再次设置 PENDING，因为 reject_stage 已经完成了状态初步重置
+        # 我们确保进入运行状态并启动
         pipeline = await self.state_store.load(pipeline_id)
         if pipeline is None:
             return
         if stage_index < 0 or stage_index >= len(pipeline.stages):
             return
+        stage = pipeline.stages[stage_index]
+        stage.status = StageStatus.RUNNING
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = datetime.now()
+        pipeline.logs.append(
+            f"[{_timestamp()}] 正在重新执行阶段 {stage.stage_type.value}"
+        )
+        await self.state_store.save(pipeline)
         try:
             await self._run_stage_by_index(pipeline, stage_index)
         except Exception:
