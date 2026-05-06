@@ -1292,5 +1292,5 @@ def test_code_agent_generates_required_files_in_batches():
     )
 
     assert output.success is True
-    assert call_count["value"] == 3
+    assert call_count["value"] == 4  # 3 generation calls + 1 consistency review
     assert set(output.result["files"].keys()) == {"app/main.py", "app/router.py", "requirements.txt"}

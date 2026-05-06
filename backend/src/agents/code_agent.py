@@ -19,6 +19,7 @@ class CodeAgent(BaseAgent):
 
     BATCH_SIZE = 1
     MAX_BATCH_RETRIES = 3
+    CONTEXT_FILE_MAX_CHARS = 1500
 
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         solution_doc = input_data.context.get("solution_doc", "")
@@ -97,7 +98,7 @@ class CodeAgent(BaseAgent):
                     data_models=data_models,
                     full_file_plan=file_plan,
                     current_batch=pending_batch,
-                    generated_paths=generated_paths,
+                    generated_files=generated_files,
                     batch_index=batch_index,
                     total_batches=total_batches,
                     retry_index=retry_index,
@@ -149,6 +150,9 @@ class CodeAgent(BaseAgent):
 
             generated_files.update(batch_files)
 
+        # Post-generation consistency review: fix cross-file import/interface mismatches
+        generated_files = await self._consistency_review(generated_files, usage_totals)
+
         final_usage = usage_totals if any(usage_totals.values()) else None
         return self._validate_required_files(generated_files, target_files), final_usage, model_name
 
@@ -163,7 +167,7 @@ class CodeAgent(BaseAgent):
         data_models: Any,
         full_file_plan: list[dict[str, Any]],
         current_batch: list[dict[str, Any]],
-        generated_paths: list[str],
+        generated_files: dict[str, str],
         batch_index: int,
         total_batches: int,
         retry_index: int,
@@ -195,8 +199,8 @@ class CodeAgent(BaseAgent):
 ## 当前需要生成的文件批次（第 {batch_index}/{total_batches} 批，第 {retry_index} 次尝试）
 {json.dumps(current_batch, ensure_ascii=False, indent=2)}
 
-## 已经生成完成的文件路径
-{json.dumps(generated_paths, ensure_ascii=False, indent=2)}
+## 已生成文件（供上下文参考，保持接口一致）
+{self._build_files_context(generated_files, self.CONTEXT_FILE_MAX_CHARS)}
 
 请按以下标签格式返回当前批次的每个文件：
 <file path="相对文件路径">
@@ -220,6 +224,60 @@ class CodeAgent(BaseAgent):
             user_message += f"\n\n请根据以下反馈修改：\n{feedback}"
 
         return user_message
+
+    def _build_files_context(self, files: dict[str, str], max_chars: int) -> str:
+        """Format already-generated files for inclusion in subsequent prompts."""
+        if not files:
+            return "（暂无已生成文件）"
+        parts: list[str] = []
+        for path, content in files.items():
+            if len(content) > max_chars:
+                body = content[:max_chars] + f"\n… (已截断，剩余 {len(content) - max_chars} 字符)"
+            else:
+                body = content
+            parts.append(f"=== {path} ===\n{body}")
+        return "\n\n".join(parts)
+
+    async def _consistency_review(
+        self,
+        files: dict[str, str],
+        usage_totals: dict[str, int],
+    ) -> dict[str, str]:
+        """LLM pass to fix cross-file import/interface mismatches after all files are generated."""
+        if len(files) <= 1:
+            return files
+
+        file_summaries = self._build_files_context(files, self.CONTEXT_FILE_MAX_CHARS)
+        user_message = f"""你是一位代码审查专家。以下是刚生成的全部文件，请检查它们之间是否存在不一致（如 import 路径错误、接口签名不匹配、变量名不统一、缺少必要 export 等），并输出修正后的完整文件。
+
+## 所有生成文件
+{file_summaries}
+
+请按以下标签格式返回需要修正的文件（无需修正的文件可以省略）：
+<file path="相对文件路径">
+<summary>修正内容说明</summary>
+<content>
+修正后的完整文件内容
+</content>
+</file>
+
+如果所有文件均一致无需修改，请只回复：ALL_CONSISTENT
+"""
+        response = await self.call_llm_response(user_message, temperature=0.1)
+        if response.usage:
+            for key in usage_totals:
+                usage_totals[key] += int(response.usage.get(key, 0) or 0)
+
+        response_text = response.content.strip()
+        if response_text == "ALL_CONSISTENT":
+            return files
+
+        fixes = self._parse_tagged_files(response_text)
+        if fixes:
+            # Only update files that already exist; don't let the review add new ones
+            existing_fixes = {p: c for p, c in fixes.items() if p in files}
+            return {**files, **existing_fixes}
+        return files
 
     def _normalize_stack(self, value: Any) -> dict[str, str]:
         defaults = {
