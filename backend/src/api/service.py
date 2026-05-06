@@ -105,6 +105,14 @@ STAGE_COMMIT_MESSAGE_MAP = {
     StageType.DELIVERY: "chore(flowstate): finalize delivery",
 }
 
+STAGE_DOC_FILENAMES = {
+    StageType.REQUIREMENT: ["requirements.md"],
+    StageType.SOLUTION: ["solution.md"],
+    StageType.TESTING: ["test_report.md"],
+    StageType.REVIEW: ["review_report.md"],
+    StageType.DELIVERY: ["delivery.md", "pr.md"],
+}
+
 
 def _resolve_project_path(project_path: str) -> Path | None:
     if not project_path.strip():
@@ -164,30 +172,55 @@ def _summarize_project_path(project_path: Path) -> str:
     )
 
 
-def _effective_project_path(pipeline: Pipeline) -> str:
+def _execution_project_path(pipeline: Pipeline) -> str:
     git_ctx = pipeline.context.git
     if git_ctx.enabled and git_ctx.worktree_path:
         return git_ctx.worktree_path
     return pipeline.context.project_path
 
 
-def _resolve_doc_dir(pipeline: Pipeline) -> Path:
-    git_ctx = pipeline.context.git
-    if git_ctx.enabled and git_ctx.worktree_path:
-        base = Path(git_ctx.worktree_path)
-    elif pipeline.context.project_path:
-        base = Path(pipeline.context.project_path)
-    else:
-        raise PipelineValidationError("缺少项目目录，无法写入阶段文档")
-    return base / ".flowstate" / pipeline.id / "docs"
+def _root_project_path(pipeline: Pipeline) -> str:
+    return pipeline.context.project_path
+
+
+def _project_write_targets(pipeline: Pipeline) -> list[Path]:
+    targets: list[Path] = []
+    seen: set[str] = set()
+    for raw_path in (_execution_project_path(pipeline), _root_project_path(pipeline)):
+        if not raw_path:
+            continue
+        normalized = str(Path(raw_path))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        targets.append(Path(raw_path))
+    return targets
+
+
+def _resolve_doc_dir(base_path: Path, pipeline: Pipeline) -> Path:
+    _ = pipeline
+    return base_path / "docs"
 
 
 def _write_project_doc(pipeline: Pipeline, filename: str, content: str) -> Path:
-    doc_dir = _resolve_doc_dir(pipeline)
-    doc_dir.mkdir(parents=True, exist_ok=True)
-    doc_path = doc_dir / filename
-    doc_path.write_text(content, encoding="utf-8")
-    return doc_path
+    targets = _project_write_targets(pipeline)
+    if not targets:
+        raise PipelineValidationError("缺少项目目录，无法写入阶段文档")
+
+    written_path: Path | None = None
+    root_path = Path(_root_project_path(pipeline)) if _root_project_path(pipeline) else None
+
+    for target in targets:
+        doc_dir = _resolve_doc_dir(target, pipeline)
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        doc_path = doc_dir / filename
+        doc_path.write_text(content, encoding="utf-8")
+        if root_path is not None and target == root_path:
+            written_path = doc_path
+        elif written_path is None:
+            written_path = doc_path
+
+    return written_path or (_resolve_doc_dir(targets[0], pipeline) / filename)
 
 
 def _normalize_generated_filepath(filepath: str) -> Path:
@@ -198,19 +231,54 @@ def _normalize_generated_filepath(filepath: str) -> Path:
     return relative_path
 
 
-def _write_generated_code(project_path: str, files: dict[str, str]) -> list[str]:
-    if not project_path:
+def _write_generated_code(project_paths: list[str], files: dict[str, str]) -> list[str]:
+    if not project_paths:
         raise PipelineValidationError("缺少项目目录，无法写入生成代码")
 
-    base_dir = Path(project_path)
+    normalized_bases: list[Path] = []
+    seen: set[str] = set()
+    for project_path in project_paths:
+        normalized = str(Path(project_path))
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_bases.append(Path(project_path))
+
+    preferred_base = normalized_bases[-1]
     written_files: list[str] = []
     for filepath, content in files.items():
         relative_path = _normalize_generated_filepath(filepath)
-        target_path = base_dir / relative_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(content, encoding="utf-8")
-        written_files.append(str(target_path))
+        preferred_target = preferred_base / relative_path
+        for base_dir in normalized_bases:
+            target_path = base_dir / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(content, encoding="utf-8")
+        written_files.append(str(preferred_target))
     return written_files
+
+
+def _remove_root_relative_paths(root_path: str, relative_paths: set[str]) -> None:
+    if not root_path:
+        return
+
+    root = Path(root_path)
+    for relative_path in sorted(relative_paths):
+        target = root / relative_path
+        if target.is_file():
+            target.unlink()
+
+
+def _remove_future_stage_docs(pipeline: Pipeline, stage_index: int) -> None:
+    root_path = _root_project_path(pipeline)
+    if not root_path:
+        return
+
+    root = Path(root_path)
+    for stage in pipeline.stages[stage_index:]:
+        for filename in STAGE_DOC_FILENAMES.get(stage.stage_type, []):
+            target = _resolve_doc_dir(root, pipeline) / filename
+            if target.exists():
+                target.unlink()
 
 
 class PipelineService:
@@ -357,6 +425,8 @@ class PipelineService:
             self.git_service.baseline_commit(target_path)
             initialized = True
             repo_root = target_path
+        elif self.git_service.has_changes(repo_root):
+            raise GitError(f"Git 仓库存在未提交变更，请先提交或清理工作区: {repo_root}")
 
         base_branch = self.git_service.current_branch(repo_root)
         base_commit = self.git_service.head_commit(repo_root)
@@ -408,7 +478,8 @@ class PipelineService:
 
     def _build_agent_input_context(self, pipeline: Pipeline) -> dict:
         context = pipeline.context.model_dump()
-        context["project_path"] = _effective_project_path(pipeline)
+        context["project_path"] = _root_project_path(pipeline)
+        context["execution_path"] = _execution_project_path(pipeline)
         return context
 
     def _commit_stage(self, pipeline: Pipeline, stage_type: StageType, commit_message: str) -> None:
@@ -427,9 +498,11 @@ class PipelineService:
 
         self.git_service.stage_all(worktree)
         sha = self.git_service.commit(worktree, commit_message)
+        prev_commit = self._find_prev_commit_anchor(pipeline, STAGE_INDEX_MAP.get(stage_type, 999))
+        stage_base = prev_commit.commit_sha if prev_commit is not None else (git_ctx.base_commit or sha)
         files_changed = self.git_service.changed_files(
             worktree,
-            base=git_ctx.base_commit or sha,
+            base=stage_base,
             head=sha,
         )
         git_ctx.stage_commits.append(
@@ -476,8 +549,10 @@ class PipelineService:
             return
 
         try:
+            previous_total_files = set(git_ctx.total_files_changed)
             worktree = Path(git_ctx.worktree_path)
             self.git_service.reset_hard(worktree, target_sha)
+            self.git_service.clean_untracked(worktree)
             git_ctx.stage_commits = [
                 commit
                 for commit in git_ctx.stage_commits
@@ -495,6 +570,11 @@ class PipelineService:
                     base=git_ctx.base_commit,
                     head=target_sha,
                 )
+            _remove_root_relative_paths(
+                _root_project_path(pipeline),
+                previous_total_files - set(git_ctx.total_files_changed),
+            )
+            _remove_future_stage_docs(pipeline, stage_index)
             pipeline.logs.append(f"[{_timestamp()}] Git 已回退到 {target_sha[:7]}")
         except GitError as error:
             pipeline.logs.append(f"[{_timestamp()}] Git 回退失败: {error}")
@@ -506,24 +586,34 @@ class PipelineService:
 
         repo_root = Path(git_ctx.repo_root) if git_ctx.repo_root else None
         worktree_path = Path(git_ctx.worktree_path) if git_ctx.worktree_path else None
+        worktree_removed = worktree_path is None
+        branch_removed = not bool(git_ctx.working_branch)
 
         if repo_root is not None and worktree_path is not None:
             try:
                 self.git_service.remove_worktree(repo_root, worktree_path, force=True)
+                worktree_removed = True
             except GitError as error:
                 pipeline.logs.append(f"[{_timestamp()}] 清理 worktree 失败: {error}")
 
         if repo_root is not None and git_ctx.working_branch:
             try:
                 self.git_service.delete_branch(repo_root, git_ctx.working_branch, force=True)
+                branch_removed = True
             except GitError as error:
                 pipeline.logs.append(f"[{_timestamp()}] 删除分支失败: {error}")
 
-        git_ctx.mode = GitMode.DISABLED
-        git_ctx.enabled = False
-        git_ctx.worktree_path = None
-        git_ctx.working_branch = None
-        git_ctx.head_commit = git_ctx.base_commit
+        if worktree_removed:
+            git_ctx.worktree_path = None
+        if branch_removed:
+            git_ctx.working_branch = None
+
+        if worktree_removed and branch_removed:
+            git_ctx.mode = GitMode.DISABLED
+            git_ctx.enabled = False
+            git_ctx.head_commit = git_ctx.base_commit
+        else:
+            pipeline.logs.append(f"[{_timestamp()}] Git 清理未完成，保留当前 Git 上下文以便重试")
 
     async def pause_pipeline(self, pipeline_id: str) -> Pipeline:
         pipeline = await self.state_store.load(pipeline_id)
@@ -961,7 +1051,7 @@ class PipelineService:
             if isinstance(generated_files, dict):
                 pipeline.context.generated_code = generated_files
                 written_files = _write_generated_code(
-                    _effective_project_path(pipeline),
+                    [str(path) for path in _project_write_targets(pipeline)],
                     generated_files,
                 )
             else:
@@ -1043,7 +1133,7 @@ class PipelineService:
             test_files = output.result.get("test_files")
             if isinstance(test_files, dict):
                 written_tests = _write_generated_code(
-                    _effective_project_path(pipeline),
+                    [str(path) for path in _project_write_targets(pipeline)],
                     test_files,
                 )
             else:
@@ -1224,7 +1314,7 @@ class PipelineService:
 
             git_ctx = pipeline.context.git
             if git_ctx.enabled and git_ctx.working_branch and git_ctx.base_branch and pr_title:
-                pr_body_file = f".flowstate/{pipeline.id}/docs/pr.md"
+                pr_body_file = "docs/pr.md"
                 git_ctx.pr_command = (
                     f"gh pr create --title {shlex.quote(pr_title)} "
                     f"--body-file {shlex.quote(pr_body_file)} "

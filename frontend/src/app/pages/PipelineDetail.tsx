@@ -19,12 +19,16 @@ import {
   FolderOpen,
   FileSearch,
   ExternalLink,
+  GitBranch,
+  GitCommitHorizontal,
+  FolderTree,
+  FileCode2,
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useApiQuery } from "../hooks/useApiQuery";
-import { pipelinesApi } from "../lib/api/services";
+import { gitApi, pipelinesApi } from "../lib/api/services";
 import { getErrorMessage } from "../lib/api/client";
-import type { PipelineStage } from "../types/pipeline";
+import type { PipelineGitContext, PipelineStage } from "../types/pipeline";
 
 const stageColors: Record<string, string> = {
   "需求分析": "#5B72FF",
@@ -34,6 +38,269 @@ const stageColors: Record<string, string> = {
   "代码评审": "#FF9F0A",
   "交付集成": "#00C7BE",
 };
+
+const stageTypeLabels: Record<string, string> = {
+  requirement_analysis: "需求分析",
+  solution_design: "方案设计",
+  coding: "代码生成",
+  testing: "测试生成",
+  code_review: "代码评审",
+  delivery: "交付集成",
+};
+
+type FileTreeNode = {
+  name: string;
+  path: string;
+  kind: "dir" | "file";
+  children: FileTreeNode[];
+  stages: string[];
+};
+
+function shortSha(value: string | null | undefined) {
+  return value ? value.slice(0, 8) : "未生成";
+}
+
+function normalizeGitDisplayPath(filePath: string, pipelineId: string | undefined) {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized) {
+    return normalized;
+  }
+
+  if (pipelineId) {
+    const scopedPrefix = `.flowstate/${pipelineId}/`;
+    if (normalized.startsWith(scopedPrefix)) {
+      return normalized.slice(scopedPrefix.length);
+    }
+  }
+
+  if (normalized.startsWith(".flowstate/")) {
+    const parts = normalized.split("/").filter(Boolean);
+    if (parts.length >= 4) {
+      return parts.slice(2).join("/");
+    }
+  }
+
+  return normalized;
+}
+
+function buildFileTree(git: PipelineGitContext | undefined, pipelineId: string | undefined) {
+  const fileStages = new Map<string, Set<string>>();
+
+  git?.stage_commits.forEach((commit) => {
+    const stageLabel = stageTypeLabels[commit.stage_type] ?? commit.stage_type;
+    commit.files_changed.forEach((filePath) => {
+      const displayPath = normalizeGitDisplayPath(filePath, pipelineId);
+      if (!displayPath) {
+        return;
+      }
+      if (!fileStages.has(displayPath)) {
+        fileStages.set(displayPath, new Set());
+      }
+      fileStages.get(displayPath)?.add(stageLabel);
+    });
+  });
+
+  git?.total_files_changed.forEach((filePath) => {
+    const displayPath = normalizeGitDisplayPath(filePath, pipelineId);
+    if (!displayPath) {
+      return;
+    }
+    if (!fileStages.has(displayPath)) {
+      fileStages.set(displayPath, new Set());
+    }
+  });
+
+  const roots: FileTreeNode[] = [];
+  const index = new Map<string, FileTreeNode>();
+
+  Array.from(fileStages.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .forEach(([filePath, stages]) => {
+      const parts = filePath.split("/").filter(Boolean);
+      let currentChildren = roots;
+      let currentPath = "";
+
+      parts.forEach((part, nodeIndex) => {
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        const isFile = nodeIndex === parts.length - 1;
+        let node = index.get(currentPath);
+
+        if (!node) {
+          node = {
+            name: part,
+            path: currentPath,
+            kind: isFile ? "file" : "dir",
+            children: [],
+            stages: [],
+          };
+          index.set(currentPath, node);
+          currentChildren.push(node);
+        }
+
+        if (isFile) {
+          node.stages = Array.from(stages).sort((left, right) => left.localeCompare(right));
+        }
+
+        currentChildren = node.children;
+      });
+    });
+
+  const sortNodes = (nodes: FileTreeNode[]) => {
+    nodes.sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === "dir" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+    nodes.forEach((node) => sortNodes(node.children));
+  };
+
+  sortNodes(roots);
+  return roots;
+}
+
+function collectDirectoryPaths(nodes: FileTreeNode[]) {
+  const paths: string[] = [];
+
+  const visit = (entries: FileTreeNode[]) => {
+    entries.forEach((node) => {
+      if (node.kind === "dir") {
+        paths.push(node.path);
+        visit(node.children);
+      }
+    });
+  };
+
+  visit(nodes);
+  return paths;
+}
+
+function GitFileTree({ nodes }: { nodes: FileTreeNode[] }) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setExpanded(new Set(collectDirectoryPaths(nodes)));
+  }, [nodes]);
+
+  if (!nodes.length) {
+    return (
+      <div
+        className="rounded-xl px-4 py-4"
+        style={{
+          background: "rgba(0,0,0,0.22)",
+          border: "1px solid rgba(255,255,255,0.06)",
+          color: "rgba(255,255,255,0.5)",
+          fontSize: 12,
+        }}
+      >
+        当前还没有可展示的 Git 变更文件。
+      </div>
+    );
+  }
+
+  const toggle = (path: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  };
+
+  const renderNode = (node: FileTreeNode, depth: number) => {
+    const isDir = node.kind === "dir";
+    const isOpen = expanded.has(node.path);
+
+    return (
+      <div key={node.path}>
+        <button
+          onClick={() => {
+            if (isDir) {
+              toggle(node.path);
+            }
+          }}
+          className="w-full flex items-center gap-2 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.03]"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: isDir ? "pointer" : "default",
+            paddingLeft: 12 + depth * 18,
+            textAlign: "left",
+          }}
+        >
+          {isDir ? (
+            <ChevronDown
+              size={12}
+              style={{
+                color: "rgba(255,255,255,0.3)",
+                transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
+                transition: "transform 0.2s",
+              }}
+            />
+          ) : (
+            <div style={{ width: 12 }} />
+          )}
+
+          {isDir ? (
+            <FolderTree size={13} style={{ color: "rgba(124,143,255,0.9)" }} />
+          ) : (
+            <FileCode2 size={13} style={{ color: "rgba(255,255,255,0.58)" }} />
+          )}
+
+          <span
+            style={{
+              color: isDir ? "rgba(255,255,255,0.82)" : "rgba(255,255,255,0.68)",
+              fontSize: 12,
+              fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+              flex: 1,
+              minWidth: 0,
+            }}
+            className="truncate"
+          >
+            {node.name}
+          </span>
+
+          {!isDir && node.stages.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              {node.stages.map((stage) => (
+                <span
+                  key={`${node.path}-${stage}`}
+                  className="px-1.5 py-0.5 rounded-md"
+                  style={{
+                    background: "rgba(91,114,255,0.08)",
+                    border: "1px solid rgba(91,114,255,0.14)",
+                    color: "rgba(160,171,255,0.92)",
+                    fontSize: 10,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {stage}
+                </span>
+              ))}
+            </div>
+          )}
+        </button>
+
+        {isDir && isOpen && node.children.map((child) => renderNode(child, depth + 1))}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className="rounded-xl py-2"
+      style={{
+        background: "rgba(0,0,0,0.22)",
+        border: "1px solid rgba(255,255,255,0.06)",
+      }}
+    >
+      {nodes.map((node) => renderNode(node, 0))}
+    </div>
+  );
+}
 
 function OutputPanel({ stage }: { stage: PipelineStage }) {
   const [copied, setCopied] = useState(false);
@@ -242,6 +509,7 @@ export function PipelineDetail() {
   const [selectedStage, setSelectedStage] = useState("");
   const [showLogs, setShowLogs] = useState(true);
   const [showProjectContext, setShowProjectContext] = useState(false);
+  const [showGitContext, setShowGitContext] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<"pause" | "resume" | "cancel" | "retry" | null>(null);
   const [pathActionMessage, setPathActionMessage] = useState<string | null>(null);
@@ -275,8 +543,24 @@ export function PipelineDetail() {
     { enabled: Boolean(id), initialData: [] }
   );
 
+  const gitStatusQuery = useApiQuery(
+    useCallback(
+      (signal: AbortSignal) => {
+        if (!id) {
+          return Promise.reject(new Error("缺少流水线 ID"));
+        }
+        return gitApi.getStatus(id, { signal });
+      },
+      [id]
+    ),
+    [id],
+    { enabled: Boolean(id) }
+  );
+
   const pipeline = pipelineQuery.data;
   const logs = logsQuery.data ?? [];
+  const git = gitStatusQuery.data;
+  const gitFileTree = useMemo(() => buildFileTree(git, pipeline?.id), [git, pipeline?.id]);
   const activeStage = useMemo(
     () => pipeline?.stages.find((stage) => stage.id === selectedStage),
     [pipeline, selectedStage]
@@ -304,6 +588,7 @@ export function PipelineDetail() {
   const syncPipeline = async () => {
     pipelineQuery.reload();
     logsQuery.reload();
+    gitStatusQuery.reload();
   };
 
   const handlePathAction = async (
@@ -740,6 +1025,281 @@ export function PipelineDetail() {
                 >
                   {pathActionMessage}
                 </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(pipeline.projectPath || git || gitStatusQuery.loading || gitStatusQuery.error) && (
+        <div
+          className="mx-6 mt-4 rounded-2xl flex-shrink-0 overflow-hidden"
+          style={{
+            background: "rgba(255,255,255,0.025)",
+            border: "1px solid rgba(255,255,255,0.07)",
+          }}
+        >
+          <button
+            onClick={() => setShowGitContext(!showGitContext)}
+            className="flex items-center gap-2 w-full px-5 py-3 hover:bg-white/[0.02] transition-colors"
+            style={{ background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
+          >
+            <GitBranch size={13} style={{ color: "rgba(255,255,255,0.45)" }} />
+            <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)", flex: 1 }}>
+              Git 工作树
+            </span>
+            <ChevronDown
+              size={12}
+              style={{
+                color: "rgba(255,255,255,0.3)",
+                transform: showGitContext ? "rotate(180deg)" : "none",
+                transition: "transform 0.2s",
+              }}
+            />
+          </button>
+
+          {showGitContext && (
+            <div className="px-5 pb-5 space-y-5">
+              {gitStatusQuery.loading && !git && (
+                <div
+                  className="rounded-xl px-4 py-4"
+                  style={{
+                    background: "rgba(0,0,0,0.22)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                    color: "rgba(255,255,255,0.5)",
+                    fontSize: 12,
+                  }}
+                >
+                  正在加载 Git 状态...
+                </div>
+              )}
+
+              {gitStatusQuery.error && !gitStatusQuery.loading && (
+                <div
+                  className="rounded-xl px-4 py-4"
+                  style={{
+                    background: "rgba(255,69,58,0.06)",
+                    border: "1px solid rgba(255,69,58,0.18)",
+                    color: "rgba(255,255,255,0.78)",
+                    fontSize: 12,
+                  }}
+                >
+                  {gitStatusQuery.error}
+                </div>
+              )}
+
+              {git && (
+                <>
+                  <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div
+                      className="rounded-xl px-4 py-3"
+                      style={{ background: "rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                        基线分支
+                      </div>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 500 }}>
+                        {git.base_branch ?? "未识别"}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl px-4 py-3"
+                      style={{ background: "rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                        工作分支
+                      </div>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 500 }}>
+                        {git.working_branch ?? "未创建"}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl px-4 py-3"
+                      style={{ background: "rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                        当前 Head
+                      </div>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 500 }}>
+                        {shortSha(git.head_commit)}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl px-4 py-3"
+                      style={{ background: "rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    >
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", marginBottom: 6 }}>
+                        变更文件
+                      </div>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.82)", fontWeight: 500 }}>
+                        {git.total_files_changed.length} 个
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.95fr)] gap-4">
+                    <div className="min-w-0">
+                      <div
+                        className="flex items-center gap-2 mb-2"
+                        style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                      >
+                        <FolderTree size={11} />
+                        变更文件树
+                      </div>
+                      <GitFileTree nodes={gitFileTree} />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div
+                        className="flex items-center gap-2 mb-2"
+                        style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                      >
+                        <GitCommitHorizontal size={11} />
+                        阶段提交
+                      </div>
+                      <div className="space-y-3">
+                        {git.stage_commits.length === 0 && (
+                          <div
+                            className="rounded-xl px-4 py-4"
+                            style={{
+                              background: "rgba(0,0,0,0.22)",
+                              border: "1px solid rgba(255,255,255,0.06)",
+                              color: "rgba(255,255,255,0.5)",
+                              fontSize: 12,
+                            }}
+                          >
+                            当前还没有 stage commit。
+                          </div>
+                        )}
+
+                        {git.stage_commits.map((commit) => (
+                          <div
+                            key={`${commit.stage_type}-${commit.commit_sha}`}
+                            className="rounded-xl px-4 py-3"
+                            style={{
+                              background: "rgba(0,0,0,0.22)",
+                              border: "1px solid rgba(255,255,255,0.06)",
+                            }}
+                          >
+                            <div className="flex items-start justify-between gap-3 mb-2">
+                              <div>
+                                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.84)", fontWeight: 500 }}>
+                                  {stageTypeLabels[commit.stage_type] ?? commit.stage_type}
+                                </div>
+                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
+                                  {new Date(commit.committed_at).toLocaleString("zh-CN")}
+                                </div>
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: "rgba(160,171,255,0.9)",
+                                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                                }}
+                              >
+                                {shortSha(commit.commit_sha)}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.66)", lineHeight: 1.6 }}>
+                              {commit.commit_message}
+                            </div>
+                            {commit.files_changed.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1.5">
+                                {commit.files_changed.map((filePath) => {
+                                  const displayPath = normalizeGitDisplayPath(filePath, pipeline.id);
+                                  return (
+                                  <span
+                                    key={`${commit.commit_sha}-${filePath}`}
+                                    className="px-2 py-1 rounded-lg"
+                                    style={{
+                                      background: "rgba(255,255,255,0.04)",
+                                      border: "1px solid rgba(255,255,255,0.07)",
+                                      color: "rgba(255,255,255,0.58)",
+                                      fontSize: 10,
+                                      fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                                    }}
+                                  >
+                                    {displayPath}
+                                  </span>
+                                )})}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {(git.repo_root || git.pr_command) && (
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                      <div className="space-y-4">
+                        {git.repo_root && (
+                          <div>
+                            <div
+                              className="flex items-center justify-between gap-3 mb-2"
+                              style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                            >
+                              <span>仓库根目录</span>
+                              <button
+                                onClick={() => handlePathAction(git.repo_root ?? undefined, "reveal", "仓库目录")}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+                                style={{
+                                  background: "rgba(255,255,255,0.04)",
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  color: "rgba(255,255,255,0.62)",
+                                  fontSize: 11,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <FolderOpen size={11} />
+                                打开目录
+                              </button>
+                            </div>
+                            <div
+                              className="rounded-xl px-4 py-2.5"
+                              style={{
+                                background: "rgba(0,0,0,0.22)",
+                                border: "1px solid rgba(255,255,255,0.06)",
+                                color: "rgba(255,255,255,0.72)",
+                                fontSize: 12,
+                                fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                                wordBreak: "break-all",
+                              }}
+                            >
+                              {git.repo_root}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {git.pr_command && (
+                        <div>
+                          <div
+                            className="flex items-center gap-2 mb-2"
+                            style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                          >
+                            <Terminal size={11} />
+                            PR 命令草案
+                          </div>
+                          <div
+                            className="rounded-xl px-4 py-3"
+                            style={{
+                              background: "rgba(0,0,0,0.22)",
+                              border: "1px solid rgba(255,255,255,0.06)",
+                              color: "rgba(255,255,255,0.72)",
+                              fontSize: 12,
+                              fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                              lineHeight: 1.7,
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
+                            {git.pr_command}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
