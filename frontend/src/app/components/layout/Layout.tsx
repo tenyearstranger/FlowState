@@ -1,5 +1,6 @@
 import { Outlet } from "react-router";
 import { Sidebar } from "./Sidebar";
+import { Toaster } from "../ui/sonner";
 
 export function Layout() {
   return (
@@ -24,6 +25,8 @@ export function Layout() {
       <main className="flex-1 h-full overflow-hidden relative flex flex-col">
         <Outlet />
       </main>
+
+      <Toaster />
     </div>
   );
 }

@@ -364,6 +364,19 @@ class PipelineService:
         await self.state_store.save(pipeline)
         return pipeline
 
+    async def continue_after_approval(self, pipeline_id: str, approved_stage_index: int) -> Pipeline | None:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            return None
+
+        next_stage_index = approved_stage_index + 1
+        if next_stage_index >= len(pipeline.stages):
+            await self.state_store.save(pipeline)
+            return pipeline
+
+        await self._run_stage_by_index(pipeline, next_stage_index)
+        return pipeline
+
     async def approve_stage(self, pipeline_id: str, stage_index: int) -> Pipeline:
         pipeline = await self.state_store.load(pipeline_id)
         if pipeline is None:
@@ -382,44 +395,31 @@ class PipelineService:
         pipeline.updated_at = now
         pipeline.logs.append(f"[{_timestamp()}] 人工审批通过: {stage.stage_type.value}")
 
-        if stage.stage_type == StageType.REQUIREMENT:
-            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.SOLUTION.value}")
-            await self._run_solution_design(pipeline)
-        elif stage.stage_type == StageType.SOLUTION:
-            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.CODING.value}")
-            await self._run_code_generation(pipeline)
-        elif stage.stage_type == StageType.CODING:
-            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.TESTING.value}")
-            await self._run_testing(pipeline)
-        elif stage.stage_type == StageType.TESTING:
-            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.REVIEW.value}")
-            await self._run_review(pipeline)
-        elif stage.stage_type == StageType.REVIEW:
-            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {StageType.DELIVERY.value}")
-            await self._run_delivery(pipeline)
-        elif stage.stage_type == StageType.DELIVERY:
+        if stage.stage_type == StageType.DELIVERY:
             pipeline.status = PipelineStatus.COMPLETED
             pipeline.logs.append(f"[{_timestamp()}] 所有阶段已完成")
             await self.state_store.save(pipeline)
-        else:
-            next_stage = pipeline.stages[stage_index + 1] if stage_index + 1 < len(pipeline.stages) else None
-            if next_stage is not None:
-                next_stage.status = StageStatus.RUNNING
-                next_stage.started_at = now
-                if not next_stage.agent_output:
-                    next_stage.agent_output = {
-                        "text": (
-                            f"## {next_stage.stage_type.value} 已进入执行队列\n\n"
-                            "上一阶段审批已通过，当前阶段已被调度。"
-                        )
-                    }
-                pipeline.status = PipelineStatus.RUNNING
-                pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {next_stage.stage_type.value}")
-            else:
-                pipeline.status = PipelineStatus.COMPLETED
-                pipeline.logs.append(f"[{_timestamp()}] 所有阶段已完成")
+            return pipeline
 
-            await self.state_store.save(pipeline)
+        next_stage = pipeline.stages[stage_index + 1] if stage_index + 1 < len(pipeline.stages) else None
+        if next_stage is not None:
+            next_stage.status = StageStatus.RUNNING
+            next_stage.started_at = now
+            if not next_stage.agent_output:
+                next_stage.agent_output = {
+                    "text": (
+                        f"## {next_stage.stage_type.value} 已进入执行队列\n\n"
+                        "上一阶段审批已通过，当前阶段已进入后台执行。"
+                    )
+                }
+            pipeline.status = PipelineStatus.RUNNING
+            pipeline.logs.append(f"[{_timestamp()}] 已推进到下一阶段: {next_stage.stage_type.value}")
+            pipeline.logs.append(f"[{_timestamp()}] 已提交后台执行任务")
+        else:
+            pipeline.status = PipelineStatus.COMPLETED
+            pipeline.logs.append(f"[{_timestamp()}] 所有阶段已完成")
+
+        await self.state_store.save(pipeline)
         return pipeline
 
     async def reject_stage(self, pipeline_id: str, stage_index: int, reason: str) -> Pipeline:

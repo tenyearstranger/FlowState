@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
+import { toast } from "sonner";
 import {
   CheckSquare,
   Clock,
@@ -55,6 +56,28 @@ export function CheckpointReview() {
   );
   const pendingCount = checkpoints.filter((checkpoint) => checkpoint.status === "pending").length;
 
+  const updateCheckpointList = useCallback((updatedCheckpoint: Checkpoint) => {
+    let nextSelectedId = "";
+
+    setCheckpoints((prev) => {
+      const nextCheckpoints = prev.map((checkpoint) =>
+        checkpoint.id === updatedCheckpoint.id ? updatedCheckpoint : checkpoint
+      );
+      const nextPendingCheckpoint =
+        nextCheckpoints.find(
+          (checkpoint) =>
+            checkpoint.id !== updatedCheckpoint.id && checkpoint.status === "pending"
+        ) ?? nextCheckpoints.find((checkpoint) => checkpoint.id === updatedCheckpoint.id);
+
+      nextSelectedId = nextPendingCheckpoint?.id ?? nextCheckpoints[0]?.id ?? "";
+      return nextCheckpoints;
+    });
+
+    if (nextSelectedId) {
+      setSelected(nextSelectedId);
+    }
+  }, []);
+
   const handleApprove = async (id: string) => {
     if (submitting) {
       return;
@@ -64,12 +87,21 @@ export function CheckpointReview() {
     setActionError(null);
     try {
       const updated = await checkpointsApi.approve(id);
-      setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      updateCheckpointList(updated);
       checkpointsQuery.reload();
       setActionDone("approved");
+      setShowRejectInput(false);
+      setRejectReason("");
+      toast.success("提交成功", {
+        description: "审批结果已保存，流水线会继续推进到下一阶段。",
+      });
       setTimeout(() => setActionDone(null), 3000);
     } catch (error) {
-      setActionError(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      setActionError(errorMessage);
+      toast.error("提交失败", {
+        description: errorMessage,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -84,14 +116,21 @@ export function CheckpointReview() {
     setActionError(null);
     try {
       const updated = await checkpointsApi.reject(id, rejectReason.trim());
-      setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      updateCheckpointList(updated);
       checkpointsQuery.reload();
       setShowRejectInput(false);
       setRejectReason("");
       setActionDone("rejected");
+      toast.success("提交成功", {
+        description: "已退回当前阶段，Agent 会结合你的反馈重新执行。",
+      });
       setTimeout(() => setActionDone(null), 3000);
     } catch (error) {
-      setActionError(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      setActionError(errorMessage);
+      toast.error("提交失败", {
+        description: errorMessage,
+      });
     } finally {
       setSubmitting(false);
     }

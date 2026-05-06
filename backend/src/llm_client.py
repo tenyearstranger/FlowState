@@ -7,6 +7,7 @@ FlowState LLM 客户端
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -218,7 +219,10 @@ class LLMClient:
         # 调用 API
         client = self._get_client()
         try:
-            response = client.chat.completions.create(**kwargs)
+            response = await asyncio.to_thread(
+                client.chat.completions.create,
+                **kwargs,
+            )
         except Exception as e:
             logger.error(f"LLM API 调用失败 (model={self.model}): {e}")
             raise

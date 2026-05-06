@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from datetime import datetime
 from datetime import timedelta
@@ -1037,6 +1038,8 @@ async def approve_checkpoint(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
 
     updated_pipeline = await service.approve_stage(pipeline.id, stage_index)
+    if stage_index + 1 < len(updated_pipeline.stages):
+        asyncio.create_task(service.continue_after_approval(pipeline.id, stage_index))
     stage_type = updated_pipeline.stages[stage_index].stage_type
     updated_checkpoint = _to_frontend_checkpoint(updated_pipeline, stage_type, stage_index)
     if updated_checkpoint is None:
