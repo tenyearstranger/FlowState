@@ -1,3 +1,6 @@
 flow_state/**
 *.pyc
 __pycache__/
+.devflow_state/
+.flowstate_settings.json
+.pytest_cache/
