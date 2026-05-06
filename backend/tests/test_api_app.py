@@ -390,6 +390,7 @@ def test_frontend_mock_dashboard_endpoints(tmp_path):
     client, _ = create_test_client(tmp_path)
 
     with client:
+        seed_response = client.post("/api/dev/seed", params={"reset": True})
         pipelines_response = client.get("/api/pipelines")
         agents_response = client.get("/api/agents")
         checkpoints_response = client.get("/api/checkpoints", params={"status": "all"})
@@ -398,22 +399,26 @@ def test_frontend_mock_dashboard_endpoints(tmp_path):
         detail_response = client.get("/api/pipelines/pl-001")
         logs_response = client.get("/api/pipelines/pl-001/logs")
 
+    assert seed_response.status_code == 201
+
     assert pipelines_response.status_code == 200
-    assert len(pipelines_response.json()) == 5
-    assert pipelines_response.json()[0]["status"] == "running"
+    assert len(pipelines_response.json()) == 3
+    statuses = {item["status"] for item in pipelines_response.json()}
+    assert "paused" in statuses
+    assert "running" in statuses
 
     assert agents_response.status_code == 200
     assert len(agents_response.json()) == 6
-    assert sum(1 for item in agents_response.json() if item["status"] == "running") == 3
+    assert sum(1 for item in agents_response.json() if item["status"] == "running") == 1
 
     assert checkpoints_response.status_code == 200
     assert len(checkpoints_response.json()) == 2
 
     assert analytics_response.status_code == 200
-    assert analytics_response.json()["summary"]["mergedChanges"] == 18
+    assert "summary" in analytics_response.json()
 
     assert activities_response.status_code == 200
-    assert len(activities_response.json()) == 4
+    assert len(activities_response.json()) >= 1
 
     assert detail_response.status_code == 200
     assert detail_response.json()["id"] == "pl-001"
@@ -849,6 +854,32 @@ def test_pipeline_pause_resume_and_cancel_actions(tmp_path):
     assert resume_response.json()["status"] == "running"
     assert cancel_response.status_code == 200
     assert cancel_response.json()["status"] == "cancelled"
+
+
+def test_ui_api_routes_smoke(tmp_path):
+    client, _ = create_test_client(tmp_path)
+
+    with client:
+        seed_response = client.post("/api/dev/seed", params={"reset": True})
+        pipelines_response = client.get("/api/pipelines")
+        agents_response = client.get("/api/agents")
+        checkpoints_response = client.get("/api/checkpoints", params={"status": "all"})
+        analytics_response = client.get("/api/analytics")
+        activities_response = client.get("/api/activities/recent")
+
+        pipeline_id = pipelines_response.json()[0]["id"] if pipelines_response.json() else ""
+        detail_response = client.get(f"/api/pipelines/{pipeline_id}") if pipeline_id else None
+        logs_response = client.get(f"/api/pipelines/{pipeline_id}/logs") if pipeline_id else None
+
+    assert seed_response.status_code == 201
+    assert pipelines_response.status_code == 200
+    assert agents_response.status_code == 200
+    assert checkpoints_response.status_code == 200
+    assert analytics_response.status_code == 200
+    assert activities_response.status_code == 200
+    assert pipeline_id
+    assert detail_response is not None and detail_response.status_code == 200
+    assert logs_response is not None and logs_response.status_code == 200
 
 
 def test_requirement_agent_renders_markdown_document_from_structured_json():

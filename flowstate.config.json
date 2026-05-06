@@ -1,0 +1,50 @@
+{
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-chat",
+    "api_key": "${FS_LLM_API_KEY}",
+    "base_url": "https://api.deepseek.com",
+    "temperature": 0.2,
+    "max_tokens": 8192
+  },
+  "pipeline": {
+    "output_mode": "auto",
+    "storage_dir": "flow_state",
+    "max_retries_per_stage": 3,
+    "auto_cleanup_days": 7
+  },
+  "codegen": {
+    "output_dir": "./generated_output",
+    "default_language": "python",
+    "default_framework": "fastapi",
+    "include_docker": true,
+    "include_tests": true,
+    "include_docs": false
+  },
+  "stages": {
+    "requirement_analysis": {
+      "needs_human_review": true,
+      "model_override": null
+    },
+    "solution_design": {
+      "needs_human_review": true,
+      "model_override": null
+    },
+    "coding": {
+      "needs_human_review": false,
+      "model_override": "deepseek-coder"
+    },
+    "testing": {
+      "needs_human_review": false,
+      "model_override": null
+    },
+    "code_review": {
+      "needs_human_review": true,
+      "model_override": null
+    },
+    "delivery": {
+      "needs_human_review": true,
+      "model_override": null
+    }
+  }
+}
