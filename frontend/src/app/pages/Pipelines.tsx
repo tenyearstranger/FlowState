@@ -406,7 +406,7 @@ export function Pipelines() {
 
         <div className="flex items-center gap-1">
           <Filter size={11} style={{ color: "rgba(255,255,255,0.3)" }} />
-          {["all", "running", "paused", "completed", "failed"].map((status) => (
+          {["all", "running", "paused", "completed", "failed", "cancelled"].map((status) => (
             <button
               key={status}
               onClick={() => setFilter(status)}
@@ -429,7 +429,9 @@ export function Pipelines() {
                 ? "暂停"
                 : status === "completed"
                 ? "已完成"
-                : "失败"}
+                : status === "failed"
+                ? "失败"
+                : "已终止"}
             </button>
           ))}
         </div>

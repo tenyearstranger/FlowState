@@ -26,7 +26,7 @@ class CodeAgent(BaseAgent):
         req_doc = input_data.context.get("requirement_doc", "")
         feedback = input_data.human_feedback
 
-        files = await self._llm_generate_code(
+        files, token_usage, model = await self._llm_generate_code(
             solution=solution_doc,
             structured_solution=structured_solution,
             req=req_doc,
@@ -50,6 +50,8 @@ class CodeAgent(BaseAgent):
             summary=f"代码生成完成，共 {len(files)} 个文件",
             details="\n".join(f"  ✅ {fname}" for fname in files),
             needs_human_review=False,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _llm_generate_code(
@@ -59,7 +61,7 @@ class CodeAgent(BaseAgent):
         structured_solution: dict[str, Any],
         req: str,
         feedback: str | None,
-    ) -> dict[str, str]:
+    ) -> tuple[dict[str, str], dict[str, int] | None, str]:
         resolved_stack = self._normalize_stack(structured_solution.get("resolved_stack"))
         architecture = str(structured_solution.get("architecture_overview") or "").strip()
         api_design = structured_solution.get("api_design", [])
@@ -73,6 +75,12 @@ class CodeAgent(BaseAgent):
 
         generated_files: dict[str, str] = {}
         generated_paths: list[str] = []
+        usage_totals = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        model_name = self.model_name
         total_batches = len(list(self._chunk_file_plan(target_files, self.BATCH_SIZE)))
 
         for batch_index, batch in enumerate(self._chunk_file_plan(target_files, self.BATCH_SIZE), start=1):
@@ -96,10 +104,17 @@ class CodeAgent(BaseAgent):
                     feedback=feedback,
                 )
 
-                response_text = await self.call_llm(
+                response = await self.call_llm_response(
                     user_message,
                     temperature=0.1,
                 )
+                response_text = response.content
+                if response.usage:
+                    for key in usage_totals:
+                        usage_totals[key] += int(response.usage.get(key, 0) or 0)
+                if response.model:
+                    model_name = response.model
+
                 new_files = self._parse_tagged_files(response_text)
                 if not new_files:
                     try:
@@ -134,7 +149,8 @@ class CodeAgent(BaseAgent):
 
             generated_files.update(batch_files)
 
-        return self._validate_required_files(generated_files, target_files)
+        final_usage = usage_totals if any(usage_totals.values()) else None
+        return self._validate_required_files(generated_files, target_files), final_usage, model_name
 
     def _build_batch_prompt(
         self,

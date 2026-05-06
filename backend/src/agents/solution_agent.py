@@ -21,7 +21,7 @@ class SolutionAgent(BaseAgent):
         feedback = input_data.human_feedback
         requirement_summary = self._build_requirement_summary(requirement_doc)
 
-        structured_payload = await self._generate_structured_payload(
+        structured_payload, token_usage, model = await self._generate_structured_payload(
             requirement_doc=requirement_summary,
             project_path=project_path,
             project_summary=project_summary,
@@ -54,6 +54,8 @@ class SolutionAgent(BaseAgent):
             summary=f"技术方案已生成：{len(api_design)} 个核心接口，{len(file_plan)} 个目标文件",
             details=structured_doc,
             needs_human_review=True,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _generate_structured_payload(
@@ -63,7 +65,7 @@ class SolutionAgent(BaseAgent):
         project_path: str,
         project_summary: str,
         feedback: str | None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, int] | None, str]:
         user_message = f"""请基于以下需求文档和项目上下文，输出结构化技术方案 JSON。
 
 需求文档：
@@ -127,15 +129,15 @@ class SolutionAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n请根据以下反馈修订方案：\n{feedback}"
 
-        structured_json = await self.call_llm(
+        response = await self.call_llm_response(
             user_message,
             expect_json=True,
             temperature=0.1,
         )
-        parsed = json.loads(structured_json)
+        parsed = json.loads(response.content)
         if not isinstance(parsed, dict):
             raise ValueError("方案设计模型返回的结构不是 JSON 对象")
-        return parsed
+        return parsed, response.usage, response.model
 
     def _render_markdown(
         self,

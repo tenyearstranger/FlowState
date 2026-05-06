@@ -18,7 +18,7 @@ class ReviewAgent(BaseAgent):
         test_report = input_data.context.get("test_report", "")
         feedback = input_data.human_feedback
 
-        review = await self._llm_review(code_files, test_report, feedback)
+        review, token_usage, model = await self._llm_review(code_files, test_report, feedback)
 
         issues = review.get("issues", [])
         critical = sum(1 for i in issues if i["severity"] == "critical")
@@ -34,6 +34,8 @@ class ReviewAgent(BaseAgent):
             summary=f"评审完成：评分 {review.get('score', 0)}/100，发现 {len(issues)} 个问题",
             details=self._format_review(review),
             needs_human_review=True,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _llm_review(
@@ -41,7 +43,7 @@ class ReviewAgent(BaseAgent):
         code_files: Dict[str, str],
         test_report: str,
         feedback: str | None,
-    ) -> dict:
+    ) -> tuple[dict, dict[str, int] | None, str]:
         """调用 LLM 进行代码评审"""
         code_summary = "\n\n".join(
             f"=== {path} ===\n{content[:800]}"
@@ -71,9 +73,10 @@ class ReviewAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n根据以下反馈调整评审：\n{feedback}"
 
-        response = await self.call_llm(user_message, expect_json=True)
+        llm_response = await self.call_llm_response(user_message, expect_json=True)
+        response = llm_response.content
         try:
-            return json.loads(response)
+            return json.loads(response), llm_response.usage, llm_response.model
         except json.JSONDecodeError:
             return {
                 "score": 70,
@@ -81,7 +84,7 @@ class ReviewAgent(BaseAgent):
                 "strengths": ["代码结构完整"],
                 "issues": [{"file": "unknown", "line": 0, "severity": "medium", "message": "请人工审查代码质量"}],
                 "suggestions": ["建议人工审查"],
-            }
+            }, llm_response.usage, llm_response.model
 
     def _format_review(self, review: dict) -> str:
         lines = [

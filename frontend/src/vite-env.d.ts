@@ -14,5 +14,7 @@ interface Window {
   api?: {
     ping: () => string;
     chooseDirectory?: () => Promise<string | null>;
+    openPath?: (targetPath: string) => Promise<string>;
+    showItemInFolder?: (targetPath: string) => Promise<boolean>;
   };
 }

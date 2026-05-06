@@ -125,6 +125,7 @@ class DevFlowEngine:
 
             output = await agent.execute(input_data)
             stage.agent_output = output.result
+            self._apply_stage_usage(stage, output)
             stage.completed_at = datetime.now()
 
             # 更新 Pipeline 上下文
@@ -238,6 +239,28 @@ class DevFlowEngine:
             pipeline.context.solution_structured = result["structured_solution"]
 
         pipeline.updated_at = datetime.now()
+
+    def _apply_stage_usage(self, stage: StageNode, agent_output: AgentOutput) -> None:
+        usage = getattr(agent_output, "token_usage", None) or {}
+        if usage:
+            stage.prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+            stage.completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+            stage.total_tokens = int(
+                usage.get("total_tokens", 0)
+                or (stage.prompt_tokens or 0) + (stage.completion_tokens or 0)
+            )
+        if getattr(agent_output, "model", None):
+            stage.model_name = agent_output.model
+        if stage.agent_output is None:
+            stage.agent_output = {}
+        if usage:
+            stage.agent_output["usage"] = {
+                "prompt_tokens": stage.prompt_tokens or 0,
+                "completion_tokens": stage.completion_tokens or 0,
+                "total_tokens": stage.total_tokens or 0,
+            }
+        if stage.model_name:
+            stage.agent_output["model"] = stage.model_name
 
     async def run_fully_auto(self, requirement: str) -> Pipeline:
         """

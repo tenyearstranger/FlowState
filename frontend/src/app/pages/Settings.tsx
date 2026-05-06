@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import {
   Settings as SettingsIcon,
@@ -9,61 +9,124 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  Plus,
   Trash2,
   ToggleLeft,
   ToggleRight,
+  RotateCcw,
 } from "lucide-react";
-
-const providers = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
-    color: "#74AA9C",
-    active: true,
-    hasKey: true,
-    maskedKey: "sk-proj-••••••••••••••••••••••••••••••••••••••••••XXXX",
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic",
-    models: ["claude-3-7-sonnet", "claude-3-5-haiku", "claude-3-opus"],
-    color: "#D4A96A",
-    active: true,
-    hasKey: true,
-    maskedKey: "sk-ant-••••••••••••••••••••••••••••••••••••••••XXXX",
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    models: ["deepseek-chat", "deepseek-coder"],
-    color: "#6B9FFF",
-    active: false,
-    hasKey: false,
-    maskedKey: "",
-  },
-  {
-    id: "qwen",
-    name: "通义千问 (Qwen)",
-    models: ["qwen-max", "qwen-plus", "qwen-turbo"],
-    color: "#FF7A5C",
-    active: false,
-    hasKey: false,
-    maskedKey: "",
-  },
-];
+import { useApiQuery } from "../hooks/useApiQuery";
+import { getErrorMessage } from "../lib/api/client";
+import { settingsApi } from "../lib/api/services";
+import type { SettingsData, SettingsProvider, SettingsUpdatePayload } from "../types/settings";
 
 type Tab = "providers" | "pipeline" | "general";
 
+type ProviderDraft = SettingsProvider & {
+  apiKeyDraft: string;
+};
+
+const emptySettings: SettingsData = {
+  providers: [],
+  pipeline: {
+    defaultProvider: "deepseek",
+    maxAgentRetries: 3,
+    checkpointTimeoutMinutes: 60,
+    autoCreateBranch: true,
+    autoCommitCode: true,
+    autoCreateMR: true,
+    branchNamePattern: "devflow/{pipeline-id}-{slug}",
+    repositoryPath: "./src",
+    semanticIndex: false,
+  },
+  general: {
+    checkpointNotifications: true,
+    pipelineCompleteNotifications: true,
+    agentFailureAlerts: true,
+    logRetentionDays: "7",
+    anonymousUsageStats: false,
+    appVersion: "v0.1.0-alpha",
+    engineVersion: "v0.1.0",
+    apiVersion: "v1",
+  },
+};
+
 export function Settings() {
   const [activeTab, setActiveTab] = useState<Tab>("providers");
+  const [draft, setDraft] = useState<SettingsData>(emptySettings);
+  const [providerDrafts, setProviderDrafts] = useState<ProviderDraft[]>([]);
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const settingsQuery = useApiQuery(
+    useCallback((signal: AbortSignal) => settingsApi.get({ signal }), []),
+    []
+  );
+
+  useEffect(() => {
+    if (!settingsQuery.data) {
+      return;
+    }
+    setDraft(settingsQuery.data);
+    setProviderDrafts(
+      settingsQuery.data.providers.map((provider) => ({
+        ...provider,
+        apiKeyDraft: "",
+      }))
+    );
+  }, [settingsQuery.data]);
+
+  const providerIds = useMemo(
+    () => providerDrafts.map((provider) => provider.id),
+    [providerDrafts]
+  );
+
+  const handleProviderChange = (providerId: string, updater: (provider: ProviderDraft) => ProviderDraft) => {
+    setProviderDrafts((current) =>
+      current.map((provider) => (provider.id === providerId ? updater(provider) : provider))
+    );
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const payload: SettingsUpdatePayload = {
+        providers: providerDrafts.map((provider) => ({
+          id: provider.id,
+          active: provider.active,
+          apiKey:
+            provider.apiKeyDraft.trim() !== ""
+              ? provider.apiKeyDraft.trim()
+              : provider.hasKey
+              ? undefined
+              : "",
+        })),
+        pipeline: draft.pipeline,
+        general: {
+          checkpointNotifications: draft.general.checkpointNotifications,
+          pipelineCompleteNotifications: draft.general.pipelineCompleteNotifications,
+          agentFailureAlerts: draft.general.agentFailureAlerts,
+          logRetentionDays: draft.general.logRetentionDays,
+          anonymousUsageStats: draft.general.anonymousUsageStats,
+        },
+      };
+      const updated = await settingsApi.update(payload);
+      setDraft(updated);
+      setProviderDrafts(
+        updated.providers.map((provider) => ({
+          ...provider,
+          apiKeyDraft: "",
+        }))
+      );
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (error) {
+      setSaveError(getErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const tabs: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
@@ -74,7 +137,6 @@ export function Settings() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
       <div
         className="flex items-center justify-between px-8 py-5 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -91,6 +153,7 @@ export function Settings() {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={handleSave}
+          disabled={saving}
           className="flex items-center gap-2 px-4 py-2 rounded-xl"
           style={{
             background: saved
@@ -100,16 +163,46 @@ export function Settings() {
             color: saved ? "#34C759" : "white",
             fontSize: 13,
             fontWeight: 500,
-            cursor: "pointer",
+            cursor: saving ? "not-allowed" : "pointer",
             boxShadow: saved ? "none" : "0 4px 14px rgba(91,114,255,0.3)",
             transition: "all 0.2s",
+            opacity: saving ? 0.75 : 1,
           }}
         >
-          {saved ? <><Check size={13} /> 已保存</> : "保存更改"}
+          {saved ? <><Check size={13} /> 已保存</> : saving ? "保存中..." : "保存更改"}
         </motion.button>
       </div>
 
-      {/* Tabs */}
+      {(settingsQuery.error || saveError) && (
+        <div className="px-8 pt-5">
+          <div
+            className="rounded-2xl p-4 flex items-center justify-between"
+            style={{
+              background: "rgba(255,69,58,0.06)",
+              border: "1px solid rgba(255,69,58,0.18)",
+            }}
+          >
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
+              {saveError ?? settingsQuery.error}
+            </span>
+            <button
+              onClick={settingsQuery.reload}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+              style={{
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.65)",
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              <RotateCcw size={12} />
+              重试
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         className="flex items-center gap-1 px-8 py-3 flex-shrink-0"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
@@ -120,19 +213,9 @@ export function Settings() {
             onClick={() => setActiveTab(tab.id)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg transition-all"
             style={{
-              background:
-                activeTab === tab.id
-                  ? "rgba(91,114,255,0.12)"
-                  : "transparent",
-              color:
-                activeTab === tab.id
-                  ? "#A0ABFF"
-                  : "rgba(255,255,255,0.45)",
-              border: `1px solid ${
-                activeTab === tab.id
-                  ? "rgba(91,114,255,0.22)"
-                  : "transparent"
-              }`,
+              background: activeTab === tab.id ? "rgba(91,114,255,0.12)" : "transparent",
+              color: activeTab === tab.id ? "#A0ABFF" : "rgba(255,255,255,0.45)",
+              border: `1px solid ${activeTab === tab.id ? "rgba(91,114,255,0.22)" : "transparent"}`,
               fontSize: 12,
               cursor: "pointer",
             }}
@@ -144,123 +227,156 @@ export function Settings() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-8 py-6">
+        {settingsQuery.loading && providerIds.length === 0 ? (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)" }}>正在加载设置...</div>
+        ) : null}
+
         {activeTab === "providers" && (
           <div className="max-w-2xl space-y-4">
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 20 }}>
-              配置 AI 模型提供商，Agent 将在运行时使用这些配置。支持运行时切换。
+              配置 AI 模型提供商，Agent 将在运行时使用这些配置。
             </p>
-
-            {providers.map((provider, i) => (
+            {providerDrafts.map((provider, index) => (
               <ProviderCard
                 key={provider.id}
                 provider={provider}
-                index={i}
-                showKey={showKey[provider.id] || false}
+                index={index}
+                showKey={Boolean(showKey[provider.id])}
                 onToggleKey={() =>
-                  setShowKey((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }))
+                  setShowKey((current) => ({ ...current, [provider.id]: !current[provider.id] }))
+                }
+                onToggleActive={() =>
+                  handleProviderChange(provider.id, (current) => ({
+                    ...current,
+                    active: !current.active,
+                  }))
+                }
+                onRemoveKey={() =>
+                  handleProviderChange(provider.id, (current) => ({
+                    ...current,
+                    hasKey: false,
+                    maskedKey: "",
+                    apiKeyDraft: "",
+                  }))
+                }
+                onApiKeyDraftChange={(value) =>
+                  handleProviderChange(provider.id, (current) => ({
+                    ...current,
+                    apiKeyDraft: value,
+                  }))
                 }
               />
             ))}
-
-            <button
-              className="flex items-center gap-2 w-full py-3 rounded-xl"
-              style={{
-                background: "rgba(255,255,255,0.02)",
-                border: "1px dashed rgba(255,255,255,0.1)",
-                color: "rgba(255,255,255,0.4)",
-                fontSize: 12,
-                cursor: "pointer",
-              }}
-            >
-              <Plus size={13} /> 添加自定义提供商
-            </button>
           </div>
         )}
 
         {activeTab === "pipeline" && (
           <div className="max-w-2xl space-y-6">
             <SectionCard title="默认 Pipeline 配置">
-              <SettingRow
-                label="默认 LLM 提供商"
-                desc="新建 Agent 时的默认提供商"
-              >
+              <SettingRow label="默认 LLM 提供商" desc="新建 Agent 时的默认提供商">
                 <select
+                  value={draft.pipeline.defaultProvider}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, defaultProvider: event.target.value },
+                    }))
+                  }
                   className="px-3 py-2 rounded-lg"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 12,
-                    outline: "none",
-                  }}
+                  style={selectStyle}
                 >
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
+                  {providerDrafts.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
                 </select>
               </SettingRow>
-              <SettingRow
-                label="Agent 最大重试次数"
-                desc="当 Agent 执行失败或被 Reject 时的最大重试次数"
-              >
+              <SettingRow label="Agent 最大重试次数" desc="当 Agent 执行失败或被 Reject 时的最大重试次数">
                 <input
                   type="number"
-                  defaultValue={3}
+                  value={draft.pipeline.maxAgentRetries}
                   min={1}
                   max={10}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: {
+                        ...current.pipeline,
+                        maxAgentRetries: Math.max(1, Number(event.target.value) || 1),
+                      },
+                    }))
+                  }
                   className="w-20 px-3 py-2 rounded-lg text-center"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 12,
-                    outline: "none",
-                  }}
+                  style={inputStyle}
                 />
               </SettingRow>
-              <SettingRow
-                label="检查点超时时间"
-                desc="Human-in-the-Loop 检查点等待人工审批的超时时间（分钟）"
-              >
+              <SettingRow label="检查点超时时间" desc="检查点等待人工审批的超时时间（分钟）">
                 <input
                   type="number"
-                  defaultValue={60}
+                  value={draft.pipeline.checkpointTimeoutMinutes}
                   min={5}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: {
+                        ...current.pipeline,
+                        checkpointTimeoutMinutes: Math.max(5, Number(event.target.value) || 5),
+                      },
+                    }))
+                  }
                   className="w-20 px-3 py-2 rounded-lg text-center"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 12,
-                    outline: "none",
-                  }}
+                  style={inputStyle}
                 />
               </SettingRow>
             </SectionCard>
 
             <SectionCard title="Git 集成">
               <SettingRow label="自动创建分支" desc="代码生成完成后自动创建功能分支">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.pipeline.autoCreateBranch}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, autoCreateBranch: !current.pipeline.autoCreateBranch },
+                    }))
+                  }
+                />
               </SettingRow>
               <SettingRow label="自动提交代码" desc="代码生成后自动 commit（需人工审批后才推送）">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.pipeline.autoCommitCode}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, autoCommitCode: !current.pipeline.autoCommitCode },
+                    }))
+                  }
+                />
               </SettingRow>
               <SettingRow label="自动发起 MR" desc="交付集成阶段自动创建 Merge Request">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.pipeline.autoCreateMR}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, autoCreateMR: !current.pipeline.autoCreateMR },
+                    }))
+                  }
+                />
               </SettingRow>
               <SettingRow label="Branch 命名规则" desc="">
                 <input
                   type="text"
-                  defaultValue="devflow/{pipeline-id}-{slug}"
+                  value={draft.pipeline.branchNamePattern}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, branchNamePattern: event.target.value },
+                    }))
+                  }
                   className="px-3 py-2 rounded-lg"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 11,
-                    fontFamily: "monospace",
-                    outline: "none",
-                    width: 220,
-                  }}
+                  style={{ ...inputStyle, width: 220, fontFamily: "monospace" }}
                 />
               </SettingRow>
             </SectionCard>
@@ -269,21 +385,27 @@ export function Settings() {
               <SettingRow label="代码库路径" desc="Agent 分析代码时的根目录">
                 <input
                   type="text"
-                  defaultValue="./src"
+                  value={draft.pipeline.repositoryPath}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, repositoryPath: event.target.value },
+                    }))
+                  }
                   className="px-3 py-2 rounded-lg"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 11,
-                    fontFamily: "monospace",
-                    outline: "none",
-                    width: 160,
-                  }}
+                  style={{ ...inputStyle, width: 160, fontFamily: "monospace" }}
                 />
               </SettingRow>
               <SettingRow label="语义索引" desc="对代码库进行向量化索引，提升 Agent 检索准确率">
-                <ToggleSwitch defaultOn={false} />
+                <ToggleSwitch
+                  on={draft.pipeline.semanticIndex}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      pipeline: { ...current.pipeline, semanticIndex: !current.pipeline.semanticIndex },
+                    }))
+                  }
+                />
               </SettingRow>
             </SectionCard>
           </div>
@@ -293,57 +415,85 @@ export function Settings() {
           <div className="max-w-2xl space-y-6">
             <SectionCard title="通知">
               <SettingRow label="检查点提醒" desc="有新的检查点需要审批时发送通知">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.general.checkpointNotifications}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      general: { ...current.general, checkpointNotifications: !current.general.checkpointNotifications },
+                    }))
+                  }
+                />
               </SettingRow>
               <SettingRow label="Pipeline 完成通知" desc="Pipeline 运行完成时通知">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.general.pipelineCompleteNotifications}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      general: {
+                        ...current.general,
+                        pipelineCompleteNotifications: !current.general.pipelineCompleteNotifications,
+                      },
+                    }))
+                  }
+                />
               </SettingRow>
               <SettingRow label="Agent 失败告警" desc="Agent 执行失败时即时告警">
-                <ToggleSwitch defaultOn={true} />
+                <ToggleSwitch
+                  on={draft.general.agentFailureAlerts}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      general: { ...current.general, agentFailureAlerts: !current.general.agentFailureAlerts },
+                    }))
+                  }
+                />
               </SettingRow>
             </SectionCard>
 
             <SectionCard title="数据与隐私">
               <SettingRow label="保留日志天数" desc="Pipeline 运行日志的保留时间">
                 <select
+                  value={draft.general.logRetentionDays}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      general: { ...current.general, logRetentionDays: event.target.value },
+                    }))
+                  }
                   className="px-3 py-2 rounded-lg"
-                  style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    color: "rgba(255,255,255,0.7)",
-                    fontSize: 12,
-                    outline: "none",
-                  }}
+                  style={selectStyle}
                 >
-                  <option>7 天</option>
-                  <option>30 天</option>
-                  <option>90 天</option>
-                  <option>永久</option>
+                  <option value="7">7 天</option>
+                  <option value="30">30 天</option>
+                  <option value="90">90 天</option>
+                  <option value="forever">永久</option>
                 </select>
               </SettingRow>
               <SettingRow label="匿名使用统计" desc="帮助改进产品（不包含代码内容）">
-                <ToggleSwitch defaultOn={false} />
+                <ToggleSwitch
+                  on={draft.general.anonymousUsageStats}
+                  onToggle={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      general: { ...current.general, anonymousUsageStats: !current.general.anonymousUsageStats },
+                    }))
+                  }
+                />
               </SettingRow>
             </SectionCard>
 
             <SectionCard title="关于">
               <div className="py-2 space-y-2">
                 {[
-                  { label: "版本", value: "v0.1.0-alpha" },
-                  { label: "Pipeline 引擎", value: "v0.1.0" },
-                  { label: "API 版本", value: "v1" },
+                  { label: "版本", value: draft.general.appVersion },
+                  { label: "Pipeline 引擎", value: draft.general.engineVersion },
+                  { label: "API 版本", value: draft.general.apiVersion },
                 ].map((item) => (
                   <div key={item.label} className="flex items-center justify-between py-1">
-                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
-                      {item.label}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontFamily: "monospace",
-                        color: "rgba(255,255,255,0.35)",
-                      }}
-                    >
+                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{item.label}</span>
+                    <span style={{ fontSize: 12, fontFamily: "monospace", color: "rgba(255,255,255,0.35)" }}>
                       {item.value}
                     </span>
                   </div>
@@ -362,15 +512,19 @@ function ProviderCard({
   index,
   showKey,
   onToggleKey,
+  onToggleActive,
+  onRemoveKey,
+  onApiKeyDraftChange,
 }: {
-  provider: (typeof providers)[0];
+  provider: ProviderDraft;
   index: number;
   showKey: boolean;
   onToggleKey: () => void;
+  onToggleActive: () => void;
+  onRemoveKey: () => void;
+  onApiKeyDraftChange: (value: string) => void;
 }) {
-  const [active, setActive] = useState(provider.active);
-  const [hasKey, setHasKey] = useState(provider.hasKey);
-  const [inputKey, setInputKey] = useState("");
+  const displayValue = showKey ? provider.maskedKey || provider.apiKeyDraft : provider.maskedKey;
 
   return (
     <motion.div
@@ -380,10 +534,9 @@ function ProviderCard({
       className="rounded-2xl overflow-hidden"
       style={{
         background: "rgba(255,255,255,0.025)",
-        border: `1px solid ${active ? `${provider.color}25` : "rgba(255,255,255,0.07)"}`,
+        border: `1px solid ${provider.active ? `${provider.color}25` : "rgba(255,255,255,0.07)"}`,
       }}
     >
-      {/* Provider Header */}
       <div
         className="flex items-center justify-between px-5 py-4"
         style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
@@ -408,7 +561,7 @@ function ProviderCard({
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {hasKey && (
+          {provider.hasKey && (
             <span
               className="flex items-center gap-1 px-2 py-0.5 rounded-md"
               style={{
@@ -421,8 +574,8 @@ function ProviderCard({
               <Check size={9} /> 已配置
             </span>
           )}
-          <button onClick={() => setActive(!active)} style={{ background: "none", border: "none", cursor: "pointer" }}>
-            {active ? (
+          <button onClick={onToggleActive} style={{ background: "none", border: "none", cursor: "pointer" }}>
+            {provider.active ? (
               <ToggleRight size={22} style={{ color: provider.color }} />
             ) : (
               <ToggleLeft size={22} style={{ color: "rgba(255,255,255,0.25)" }} />
@@ -431,7 +584,6 @@ function ProviderCard({
         </div>
       </div>
 
-      {/* API Key */}
       <div className="px-5 py-4">
         <label
           style={{
@@ -447,7 +599,7 @@ function ProviderCard({
           <Key size={10} /> API Key
         </label>
 
-        {hasKey ? (
+        {provider.hasKey ? (
           <div className="flex items-center gap-2">
             <div
               className="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg"
@@ -467,7 +619,7 @@ function ProviderCard({
                   whiteSpace: "nowrap",
                 }}
               >
-                {showKey ? "sk-••••-real-key-hidden-for-demo-•••••" : provider.maskedKey}
+                {displayValue || "已保存，明文不展示"}
               </span>
             </div>
             <button
@@ -482,7 +634,7 @@ function ProviderCard({
               )}
             </button>
             <button
-              onClick={() => setHasKey(false)}
+              onClick={onRemoveKey}
               className="p-2 rounded-lg hover:bg-red-500/10 transition-colors"
               style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer" }}
             >
@@ -493,9 +645,9 @@ function ProviderCard({
           <div className="flex items-center gap-2">
             <input
               type="password"
-              value={inputKey}
-              onChange={(e) => setInputKey(e.target.value)}
-              placeholder={`sk-...`}
+              value={provider.apiKeyDraft}
+              onChange={(event) => onApiKeyDraftChange(event.target.value)}
+              placeholder="sk-..."
               className="flex-1 px-3 py-2 rounded-lg"
               style={{
                 background: "rgba(255,255,255,0.04)",
@@ -506,44 +658,6 @@ function ProviderCard({
                 outline: "none",
               }}
             />
-            <button
-              onClick={() => {
-                if (inputKey.trim()) {
-                  setHasKey(true);
-                  setInputKey("");
-                }
-              }}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg"
-              style={{
-                background: inputKey.trim()
-                  ? `${provider.color}18`
-                  : "rgba(255,255,255,0.04)",
-                border: `1px solid ${inputKey.trim() ? `${provider.color}30` : "rgba(255,255,255,0.08)"}`,
-                color: inputKey.trim() ? provider.color : "rgba(255,255,255,0.3)",
-                fontSize: 12,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-            >
-              <Check size={12} /> 保存
-            </button>
-          </div>
-        )}
-
-        {hasKey && (
-          <div className="flex items-center gap-2 mt-3">
-            <button
-              className="flex items-center gap-1 px-2 py-1 rounded-md hover:bg-white/[0.04] transition-colors"
-              style={{
-                fontSize: 10,
-                color: "rgba(255,255,255,0.4)",
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.06)",
-                cursor: "pointer",
-              }}
-            >
-              <RefreshCw size={9} /> 测试连接
-            </button>
           </div>
         )}
       </div>
@@ -556,7 +670,7 @@ function SectionCard({
   children,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div
@@ -566,10 +680,7 @@ function SectionCard({
         border: "1px solid rgba(255,255,255,0.07)",
       }}
     >
-      <div
-        className="px-5 py-3"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}
-      >
+      <div className="px-5 py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
           {title}
         </span>
@@ -586,35 +697,24 @@ function SettingRow({
 }: {
   label: string;
   desc: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
-    <div
-      className="flex items-center justify-between py-3"
-      style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
-    >
+    <div className="flex items-center justify-between py-3" style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
       <div className="flex-1 pr-4">
-        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", fontWeight: 500 }}>
-          {label}
-        </div>
-        {desc && (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>
-            {desc}
-          </div>
-        )}
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", fontWeight: 500 }}>{label}</div>
+        {desc ? (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{desc}</div>
+        ) : null}
       </div>
       {children}
     </div>
   );
 }
 
-function ToggleSwitch({ defaultOn }: { defaultOn: boolean }) {
-  const [on, setOn] = useState(defaultOn);
+function ToggleSwitch({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
-    <button
-      onClick={() => setOn(!on)}
-      style={{ background: "none", border: "none", cursor: "pointer" }}
-    >
+    <button onClick={onToggle} style={{ background: "none", border: "none", cursor: "pointer" }}>
       {on ? (
         <ToggleRight size={24} style={{ color: "#5B72FF" }} />
       ) : (
@@ -623,3 +723,19 @@ function ToggleSwitch({ defaultOn }: { defaultOn: boolean }) {
     </button>
   );
 }
+
+const inputStyle = {
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  color: "rgba(255,255,255,0.7)",
+  fontSize: 12,
+  outline: "none",
+} as const;
+
+const selectStyle = {
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  color: "rgba(255,255,255,0.7)",
+  fontSize: 12,
+  outline: "none",
+} as const;

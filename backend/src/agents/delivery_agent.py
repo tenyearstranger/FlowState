@@ -19,7 +19,7 @@ class DeliveryAgent(BaseAgent):
         review_report = input_data.context.get("review_report", "")
         feedback = input_data.human_feedback
 
-        delivery = await self._llm_prepare_delivery(code_files, review_report, feedback)
+        delivery, token_usage, model = await self._llm_prepare_delivery(code_files, review_report, feedback)
 
         return AgentOutput(
             success=True,
@@ -33,6 +33,8 @@ class DeliveryAgent(BaseAgent):
             ),
             details=self._format_delivery(delivery),
             needs_human_review=True,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _llm_prepare_delivery(
@@ -40,7 +42,7 @@ class DeliveryAgent(BaseAgent):
         code_files: Dict[str, str],
         review_report: str,
         feedback: str | None,
-    ) -> dict:
+    ) -> tuple[dict, dict[str, int] | None, str]:
         """调用 LLM 准备交付"""
         file_list = "\n".join(f"- `{p}`" for p in code_files)
 
@@ -63,7 +65,8 @@ class DeliveryAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n根据以下反馈调整：\n{feedback}"
 
-        response = await self.call_llm(user_message, expect_json=True)
+        llm_response = await self.call_llm_response(user_message, expect_json=True)
+        response = llm_response.content
         try:
             parsed = json.loads(response)
         except json.JSONDecodeError:
@@ -77,7 +80,7 @@ class DeliveryAgent(BaseAgent):
         parsed.setdefault("branch", "feature/auto-gen")
         parsed.setdefault("commit_message", "feat: auto-generate code via FlowState")
         parsed.setdefault("deployment_command", "docker-compose up -d")
-        return parsed
+        return parsed, llm_response.usage, llm_response.model
 
     def _format_delivery(self, delivery: dict) -> str:
         lines = [

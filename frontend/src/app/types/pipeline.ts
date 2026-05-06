@@ -24,7 +24,7 @@ export interface Pipeline {
   id: string;
   name: string;
   description: string;
-  status: "running" | "completed" | "failed" | "paused" | "pending";
+  status: "running" | "completed" | "failed" | "paused" | "pending" | "cancelled";
   progress: number;
   currentStage: number;
   stages: PipelineStage[];
@@ -34,6 +34,7 @@ export interface Pipeline {
   projectPath?: string;
   projectSummary?: string;
   requirementDocPath?: string;
+  solutionDocPath?: string;
 }
 
 export interface CreatePipelinePayload {

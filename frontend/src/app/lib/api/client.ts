@@ -116,6 +116,12 @@ export const apiClient = {
       body: body === undefined ? undefined : JSON.stringify(body),
       method: "POST",
     }),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(path, {
+      ...options,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      method: "PUT",
+    }),
 };
 
 export function getErrorMessage(error: unknown) {

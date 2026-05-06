@@ -40,6 +40,43 @@ def _timestamp() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+def _running_stage(pipeline: Pipeline) -> StageNode | None:
+    return next((stage for stage in pipeline.stages if stage.status == StageStatus.RUNNING), None)
+
+
+def _apply_agent_metrics(stage: StageNode, output) -> None:
+    usage = getattr(output, "token_usage", None) or {}
+    if usage:
+        stage.prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        stage.completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+        stage.total_tokens = int(
+            usage.get("total_tokens", 0)
+            or stage.prompt_tokens
+            or 0
+        ) + (0 if usage.get("total_tokens", 0) else int(stage.completion_tokens or 0))
+    if getattr(output, "model", None):
+        stage.model_name = output.model
+    if stage.agent_output is None:
+        stage.agent_output = {}
+    if usage:
+        stage.agent_output["usage"] = {
+            "prompt_tokens": stage.prompt_tokens or 0,
+            "completion_tokens": stage.completion_tokens or 0,
+            "total_tokens": stage.total_tokens or 0,
+        }
+    if stage.model_name:
+        stage.agent_output["model"] = stage.model_name
+
+
+def _append_usage_log(pipeline: Pipeline, stage: StageNode) -> None:
+    if not stage.total_tokens:
+        return
+    pipeline.logs.append(
+        f"[{_timestamp()}] {stage.stage_type.value} Token 消耗: "
+        f"{stage.total_tokens}（prompt {stage.prompt_tokens or 0} / completion {stage.completion_tokens or 0}）"
+    )
+
+
 class PipelineValidationError(ValueError):
     """Raised when incoming pipeline creation data is invalid."""
 
@@ -221,6 +258,96 @@ class PipelineService:
         await self.state_store.delete(pipeline_id)
         return True
 
+    async def pause_pipeline(self, pipeline_id: str) -> Pipeline:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        if pipeline.status != PipelineStatus.RUNNING:
+            raise PipelineValidationError("只有运行中的流水线才能暂停")
+
+        active_stage = _running_stage(pipeline)
+        if active_stage is not None:
+            active_stage.status = StageStatus.PENDING
+        pipeline.status = PipelineStatus.PAUSED
+        pipeline.updated_at = datetime.now()
+        pipeline.logs.append(f"[{_timestamp()}] 人工暂停流水线")
+        await self.state_store.save(pipeline)
+        return pipeline
+
+    async def resume_pipeline(self, pipeline_id: str) -> Pipeline:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        if pipeline.status == PipelineStatus.WAITING_HUMAN:
+            raise PipelineValidationError("当前流水线在人工审批检查点暂停，请前往检查点页处理")
+        if pipeline.status != PipelineStatus.PAUSED:
+            raise PipelineValidationError("只有已暂停的流水线才能继续")
+
+        next_stage = next(
+            (stage for stage in pipeline.stages if stage.status == StageStatus.PENDING),
+            None,
+        )
+        if next_stage is not None:
+            next_stage.status = StageStatus.RUNNING
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = datetime.now()
+        pipeline.logs.append(f"[{_timestamp()}] 继续执行流水线")
+        await self.state_store.save(pipeline)
+        return pipeline
+
+    async def cancel_pipeline(self, pipeline_id: str) -> Pipeline:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        if pipeline.status in {PipelineStatus.COMPLETED, PipelineStatus.CANCELLED}:
+            raise PipelineValidationError("当前流水线无法终止")
+
+        active_stage = _running_stage(pipeline)
+        if active_stage is not None:
+            active_stage.status = StageStatus.PENDING
+        pipeline.status = PipelineStatus.CANCELLED
+        pipeline.updated_at = datetime.now()
+        pipeline.logs.append(f"[{_timestamp()}] 人工终止流水线")
+        await self.state_store.save(pipeline)
+        return pipeline
+
+    async def retry_pipeline(self, pipeline_id: str) -> Pipeline:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        if pipeline.status != PipelineStatus.FAILED:
+            raise PipelineValidationError("只有失败的流水线才能重试")
+
+        failed_index = next(
+            (index for index, stage in enumerate(pipeline.stages) if stage.status == StageStatus.FAILED),
+            None,
+        )
+        if failed_index is None:
+            raise PipelineValidationError("未找到可重试的失败阶段")
+
+        for stage in pipeline.stages[failed_index:]:
+            stage.status = StageStatus.PENDING
+            stage.agent_output = None
+            stage.prompt_tokens = None
+            stage.completion_tokens = None
+            stage.total_tokens = None
+            stage.model_name = None
+            stage.human_feedback = None
+            stage.human_approval = None
+            stage.started_at = None
+            stage.completed_at = None
+            stage.retry_count += 1
+
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.error = None
+        pipeline.updated_at = datetime.now()
+        pipeline.logs.append(
+            f"[{_timestamp()}] 人工触发重试，从阶段 {pipeline.stages[failed_index].stage_type.value} 重新开始"
+        )
+        await self.state_store.save(pipeline)
+        await self._run_stage_by_index(pipeline, failed_index)
+        return pipeline
+
     async def run_pipeline_by_id(self, pipeline_id: str) -> Pipeline:
         pipeline = await self.state_store.load(pipeline_id)
         if pipeline is None:
@@ -339,6 +466,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             requirement_stage.agent_output = output.result
+            _apply_agent_metrics(requirement_stage, output)
             requirement_stage.status = (
                 StageStatus.WAITING_HUMAN
                 if output.needs_human_review
@@ -361,6 +489,7 @@ class PipelineService:
                 else PipelineStatus.PENDING
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, requirement_stage)
             if pipeline.context.requirement_doc_path:
                 pipeline.logs.append(
                     f"[{_timestamp()}] 需求文档已写入: {pipeline.context.requirement_doc_path}"
@@ -374,6 +503,21 @@ class PipelineService:
             pipeline.error = f"[requirement_analysis] {error}"
             pipeline.logs.append(f"[{_timestamp()}] 需求分析失败: {error}")
             raise
+
+    async def _run_stage_by_index(self, pipeline: Pipeline, stage_index: int) -> None:
+        stage_type = pipeline.stages[stage_index].stage_type
+        if stage_type == StageType.REQUIREMENT:
+            await self._run_requirement_analysis(pipeline)
+        elif stage_type == StageType.SOLUTION:
+            await self._run_solution_design(pipeline)
+        elif stage_type == StageType.CODING:
+            await self._run_code_generation(pipeline)
+        elif stage_type == StageType.TESTING:
+            await self._run_testing(pipeline)
+        elif stage_type == StageType.REVIEW:
+            await self._run_review(pipeline)
+        elif stage_type == StageType.DELIVERY:
+            await self._run_delivery(pipeline)
 
     async def _run_solution_design(self, pipeline: Pipeline) -> None:
         if len(pipeline.stages) < 2:
@@ -407,6 +551,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             solution_stage.agent_output = output.result
+            _apply_agent_metrics(solution_stage, output)
             solution_stage.status = (
                 StageStatus.WAITING_HUMAN
                 if output.needs_human_review
@@ -432,6 +577,7 @@ class PipelineService:
                 else PipelineStatus.PENDING
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, solution_stage)
             if pipeline.context.solution_doc_path:
                 pipeline.logs.append(
                     f"[{_timestamp()}] 技术方案文档已写入: {pipeline.context.solution_doc_path}"
@@ -480,6 +626,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             coding_stage.agent_output = output.result
+            _apply_agent_metrics(coding_stage, output)
             coding_stage.status = StageStatus.COMPLETED
             coding_stage.completed_at = now
 
@@ -496,6 +643,7 @@ class PipelineService:
             pipeline.updated_at = now
             pipeline.status = PipelineStatus.PENDING
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, coding_stage)
             if written_files:
                 preview = "、".join(Path(path).name for path in written_files[:5])
                 pipeline.logs.append(f"[{_timestamp()}] 生成代码已写入: {preview}")
@@ -542,6 +690,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             testing_stage.agent_output = output.result
+            _apply_agent_metrics(testing_stage, output)
             testing_stage.status = (
                 StageStatus.WAITING_HUMAN
                 if output.needs_human_review or not output.success
@@ -575,6 +724,7 @@ class PipelineService:
                 else PipelineStatus.PENDING
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, testing_stage)
             if written_tests:
                 preview = "、".join(Path(path).name for path in written_tests[:5])
                 pipeline.logs.append(f"[{_timestamp()}] 生成测试文件已写入: {preview}")
@@ -624,6 +774,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             review_stage.agent_output = output.result
+            _apply_agent_metrics(review_stage, output)
             review_stage.status = (
                 StageStatus.WAITING_HUMAN
                 if output.needs_human_review
@@ -648,6 +799,7 @@ class PipelineService:
                 else PipelineStatus.PENDING
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, review_stage)
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 代码评审进入人工确认，等待审批")
             await self.state_store.save(pipeline)
@@ -694,6 +846,7 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             delivery_stage.agent_output = output.result
+            _apply_agent_metrics(delivery_stage, output)
             delivery_stage.status = (
                 StageStatus.WAITING_HUMAN
                 if output.needs_human_review
@@ -718,6 +871,7 @@ class PipelineService:
                 else PipelineStatus.COMPLETED
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
+            _append_usage_log(pipeline, delivery_stage)
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 交付阶段进入人工确认，等待审批")
             else:

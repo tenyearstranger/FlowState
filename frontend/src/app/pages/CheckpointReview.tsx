@@ -14,6 +14,7 @@ import {
   Eye,
 } from "lucide-react";
 import { useApiQuery } from "../hooks/useApiQuery";
+import { getErrorMessage } from "../lib/api/client";
 import { checkpointsApi } from "../lib/api/services";
 import type { Checkpoint } from "../types/checkpoint";
 
@@ -24,6 +25,7 @@ export function CheckpointReview() {
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [actionDone, setActionDone] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const checkpointsQuery = useApiQuery(
     useCallback((signal: AbortSignal) => checkpointsApi.list({ signal }), []),
@@ -59,11 +61,15 @@ export function CheckpointReview() {
     }
 
     setSubmitting(true);
+    setActionError(null);
     try {
       const updated = await checkpointsApi.approve(id);
       setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      checkpointsQuery.reload();
       setActionDone("approved");
       setTimeout(() => setActionDone(null), 3000);
+    } catch (error) {
+      setActionError(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -75,13 +81,17 @@ export function CheckpointReview() {
     }
 
     setSubmitting(true);
+    setActionError(null);
     try {
       const updated = await checkpointsApi.reject(id, rejectReason.trim());
       setCheckpoints((prev) => prev.map((checkpoint) => (checkpoint.id === id ? updated : checkpoint)));
+      checkpointsQuery.reload();
       setShowRejectInput(false);
       setRejectReason("");
       setActionDone("rejected");
       setTimeout(() => setActionDone(null), 3000);
+    } catch (error) {
+      setActionError(getErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -289,6 +299,20 @@ export function CheckpointReview() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6">
+              {actionError && (
+                <div
+                  className="mb-4 rounded-xl px-4 py-3"
+                  style={{
+                    background: "rgba(255,69,58,0.06)",
+                    border: "1px solid rgba(255,69,58,0.18)",
+                    color: "rgba(255,255,255,0.72)",
+                    fontSize: 12,
+                  }}
+                >
+                  {actionError}
+                </div>
+              )}
+
               <div
                 className="rounded-2xl overflow-hidden"
                 style={{

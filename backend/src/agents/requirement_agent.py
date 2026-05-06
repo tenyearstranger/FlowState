@@ -20,7 +20,7 @@ class RequirementAgent(BaseAgent):
         project_summary = input_data.context.get("project_summary", "")
         feedback = input_data.human_feedback
 
-        structured_payload = await self._generate_structured_payload(
+        structured_payload, token_usage, model = await self._generate_structured_payload(
             raw=raw,
             project_path=project_path,
             project_summary=project_summary,
@@ -46,6 +46,8 @@ class RequirementAgent(BaseAgent):
             summary=f"需求分析完成，识别出 {len(modules)} 个功能模块",
             details=structured_doc,
             needs_human_review=True,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _generate_structured_payload(
@@ -55,7 +57,7 @@ class RequirementAgent(BaseAgent):
         project_path: str,
         project_summary: str,
         feedback: str | None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, int] | None, str]:
         user_message = f"""请结合项目上下文分析以下原始需求，并返回结构化 JSON 对象。
 
 原始需求：
@@ -89,15 +91,15 @@ class RequirementAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n根据以下反馈修改：\n{feedback}"
 
-        structured_json = await self.call_llm(
+        response = await self.call_llm_response(
             user_message,
             expect_json=True,
             temperature=0.1,
         )
-        parsed = json.loads(structured_json)
+        parsed = json.loads(response.content)
         if not isinstance(parsed, dict):
             raise ValueError("需求分析模型返回的结构不是 JSON 对象")
-        return parsed
+        return parsed, response.usage, response.model
 
     # -------- 辅助方法 --------
 

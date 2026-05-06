@@ -4,10 +4,11 @@ import base64
 from fastapi.testclient import TestClient
 
 from src.agents.base_agent import AgentInput, AgentOutput
+from src.llm_client import LLMResponse
 from src.agents.requirement_agent import RequirementAgent
 from src.api.app import create_app
 from src.bootstrap import create_engine
-from src.models.pipeline import PipelineStatus, StageType
+from src.models.pipeline import PipelineStatus, StageStatus, StageType
 from src.store.state_store import StateStore
 
 
@@ -48,6 +49,8 @@ class FakeRequirementAgent:
             summary="需求分析完成，识别出 2 个功能模块",
             details=document,
             needs_human_review=True,
+            token_usage={"prompt_tokens": 120, "completion_tokens": 280, "total_tokens": 400},
+            model="fake-requirement-model",
         )
 
 
@@ -169,6 +172,8 @@ class FakeSolutionAgent:
             summary="技术方案已生成：1 个核心接口，3 项技术选型",
             details=document,
             needs_human_review=True,
+            token_usage={"prompt_tokens": 160, "completion_tokens": 440, "total_tokens": 600},
+            model="fake-solution-model",
         )
 
 
@@ -192,6 +197,8 @@ class FakeCodeAgent:
             summary="代码生成完成，共 2 个文件",
             details="  ✅ app/main.py\n  ✅ requirements.txt",
             needs_human_review=False,
+            token_usage={"prompt_tokens": 220, "completion_tokens": 780, "total_tokens": 1000},
+            model="fake-code-model",
         )
 
 
@@ -219,6 +226,8 @@ class FakeTestAgent:
             summary="测试完成：1/1 通过",
             details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 1 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 85%",
             needs_human_review=False,
+            token_usage={"prompt_tokens": 90, "completion_tokens": 110, "total_tokens": 200},
+            model="fake-test-model",
         )
 
 
@@ -248,6 +257,8 @@ class FakeFailingTestAgent:
             summary="测试完成：0/1 通过",
             details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 0 ✅\n- 失败: 1 ❌\n- 代码覆盖率: 40%",
             needs_human_review=True,
+            token_usage={"prompt_tokens": 80, "completion_tokens": 100, "total_tokens": 180},
+            model="fake-test-model",
         )
 
 
@@ -272,6 +283,8 @@ class FakeReviewAgent:
             summary="评审完成：评分 92/100，发现 0 个问题",
             details="## 代码评审报告\n\n**评分: 92/100**\n\n- 建议补充异常路径断言",
             needs_human_review=True,
+            token_usage={"prompt_tokens": 70, "completion_tokens": 130, "total_tokens": 200},
+            model="fake-review-model",
         )
 
 
@@ -295,6 +308,8 @@ class FakeDeliveryAgent:
             summary="交付就绪：生成 PR #88，变更 3 个文件",
             details="## 📦 交付汇总\n\n**PR 编号:** #88\n**标题:** feat: 完成自律应用核心链路",
             needs_human_review=True,
+            token_usage={"prompt_tokens": 60, "completion_tokens": 140, "total_tokens": 200},
+            model="fake-delivery-model",
         )
 
 
@@ -431,6 +446,7 @@ def test_frontend_mock_create_pipeline(tmp_path):
         assert created_pipeline["template"] == "新功能开发"
         assert created_pipeline["stages"][0]["status"] == "awaiting_review"
         assert created_pipeline["stages"][0]["isCheckpoint"] is True
+        assert created_pipeline["stages"][0]["tokens"] == 400
         assert "需求文档" in created_pipeline["stages"][0]["output"]
         assert "项目目录扫描" in created_pipeline["stages"][0]["output"]
         assert "package.json" in created_pipeline["stages"][0]["output"]
@@ -452,6 +468,7 @@ def test_frontend_mock_create_pipeline(tmp_path):
     assert any("工作目录" in log for log in logs_response.json())
     assert any("项目目录扫描完成" in log for log in logs_response.json())
     assert any("需求分析完成" in log for log in logs_response.json())
+    assert any("Token 消耗: 400" in log for log in logs_response.json())
     assert any("需求文档已写入" in log for log in logs_response.json())
     assert any("等待审批" in log for log in logs_response.json())
 
@@ -504,6 +521,7 @@ def test_approve_requirement_checkpoint_advances_pipeline(tmp_path):
     assert updated_pipeline["status"] == "paused"
     assert updated_pipeline["stages"][0]["status"] == "completed"
     assert updated_pipeline["stages"][1]["status"] == "awaiting_review"
+    assert updated_pipeline["stages"][1]["tokens"] == 600
     assert "技术方案文档" in updated_pipeline["stages"][1]["output"]
     assert (project_dir / "main" / "solution.md").exists()
     assert "创建计划" in (project_dir / "main" / "solution.md").read_text(encoding="utf-8")
@@ -578,6 +596,9 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
     assert updated_pipeline["stages"][2]["status"] == "completed"
     assert updated_pipeline["stages"][3]["status"] == "completed"
     assert updated_pipeline["stages"][4]["status"] == "awaiting_review"
+    assert updated_pipeline["stages"][2]["tokens"] == 1000
+    assert updated_pipeline["stages"][3]["tokens"] == 200
+    assert updated_pipeline["stages"][4]["tokens"] == 200
     assert "FastAPI()" in (updated_pipeline["stages"][2]["output"] or "")
     assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
     assert "代码评审报告" in (updated_pipeline["stages"][4]["output"] or "")
@@ -623,6 +644,7 @@ def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
     assert updated_pipeline["stages"][2]["status"] == "completed"
     assert updated_pipeline["stages"][3]["status"] == "awaiting_review"
     assert updated_pipeline["stages"][4]["status"] == "idle"
+    assert updated_pipeline["stages"][3]["tokens"] == 180
     assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
     assert (project_dir / "tests" / "test_app.py").exists()
     assert (project_dir / "main" / "test_report.md").exists()
@@ -709,13 +731,131 @@ def test_approve_delivery_checkpoint_completes_pipeline(tmp_path):
     updated_pipeline = detail_response.json()
     assert updated_pipeline["status"] == "completed"
     assert updated_pipeline["stages"][5]["status"] == "completed"
+    assert updated_pipeline["stages"][5]["tokens"] == 200
+
+
+def test_dynamic_token_analytics_and_agents(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "analytics-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用并推进到代码评审。",
+            },
+        )
+        created_pipeline = create_response.json()
+
+        requirement_checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
+
+        solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
+        client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+
+        analytics_response = client.get("/api/analytics")
+        agents_response = client.get("/api/agents")
+
+    assert analytics_response.status_code == 200
+    analytics = analytics_response.json()
+    assert analytics["summary"]["totalRuns"] == 1
+    assert analytics["summary"]["totalTokens"] == 2400
+    assert any(item["tokens"] > 0 for item in analytics["tokenUsage"])
+    assert any(item["stage"] == "代码生成" and item["avg"] >= 0 for item in analytics["stageDurations"])
+
+    assert agents_response.status_code == 200
+    agents = agents_response.json()
+    requirement_agent = next(item for item in agents if item["name"] == "RequirementsAgent")
+    code_agent = next(item for item in agents if item["name"] == "CodegenAgent")
+    review_agent = next(item for item in agents if item["name"] == "ReviewAgent")
+    assert requirement_agent["avgTokens"] == 400
+    assert code_agent["avgTokens"] == 1000
+    assert review_agent["avgTokens"] == 200
+
+
+def test_settings_round_trip(tmp_path):
+    client, _ = create_test_client(tmp_path)
+
+    with client:
+        get_response = client.get("/api/settings")
+        assert get_response.status_code == 200
+        initial = get_response.json()
+        assert "providers" in initial
+
+        update_response = client.put(
+            "/api/settings",
+            json={
+                "providers": [
+                    {"id": "deepseek", "active": True, "apiKey": "sk-test-deepseek-1234"},
+                    {"id": "openai", "active": False},
+                ],
+                "pipeline": {
+                    "defaultProvider": "deepseek",
+                    "maxAgentRetries": 5,
+                    "checkpointTimeoutMinutes": 45,
+                    "autoCreateBranch": False,
+                    "autoCommitCode": True,
+                    "autoCreateMR": False,
+                    "branchNamePattern": "feature/{pipeline-id}",
+                    "repositoryPath": "./repo",
+                    "semanticIndex": True,
+                },
+                "general": {
+                    "checkpointNotifications": False,
+                    "pipelineCompleteNotifications": True,
+                    "agentFailureAlerts": False,
+                    "logRetentionDays": "30",
+                    "anonymousUsageStats": True,
+                },
+            },
+        )
+        assert update_response.status_code == 200
+        updated = update_response.json()
+
+    deepseek = next(item for item in updated["providers"] if item["id"] == "deepseek")
+    assert deepseek["active"] is True
+    assert deepseek["hasKey"] is True
+    assert deepseek["maskedKey"].startswith("sk-tes")
+    assert updated["pipeline"]["maxAgentRetries"] == 5
+    assert updated["pipeline"]["repositoryPath"] == "./repo"
+    assert updated["general"]["logRetentionDays"] == "30"
+
+
+def test_pipeline_pause_resume_and_cancel_actions(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    service = client.app.state.pipeline_service
+
+    pipeline = asyncio.run(
+        service.create_pipeline(
+            title="Manual control",
+            requirement="manually control pipeline",
+            start_immediately=False,
+        )
+    )
+    pipeline.status = PipelineStatus.RUNNING
+    pipeline.stages[0].status = StageStatus.RUNNING
+    asyncio.run(service.state_store.save(pipeline))
+
+    with client:
+        pause_response = client.post(f"/api/pipelines/{pipeline.id}/pause")
+        resume_response = client.post(f"/api/pipelines/{pipeline.id}/resume")
+        cancel_response = client.post(f"/api/pipelines/{pipeline.id}/cancel")
+
+    assert pause_response.status_code == 200
+    assert pause_response.json()["status"] == "paused"
+    assert resume_response.status_code == 200
+    assert resume_response.json()["status"] == "running"
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
 
 
 def test_requirement_agent_renders_markdown_document_from_structured_json():
     agent = RequirementAgent()
 
-    async def fake_call_llm(*args, **kwargs):
-        return """{
+    async def fake_call_llm_response(*args, **kwargs):
+        return LLMResponse(content="""{
   "title": "收藏功能需求分析",
   "business_goals": ["提升用户留存", "支持用户管理感兴趣内容"],
   "functional_requirements": ["列表页展示收藏状态", "支持收藏与取消收藏"],
@@ -730,9 +870,9 @@ def test_requirement_agent_renders_markdown_document_from_structured_json():
       "description": "在列表页展示已收藏和未收藏两种状态。"
     }
   ]
-}"""
+}""", usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}, model="fake-requirement-model")
 
-    agent.call_llm = fake_call_llm
+    agent.call_llm_response = fake_call_llm_response
     output = asyncio.run(
         agent.execute(
             AgentInput(
@@ -759,8 +899,8 @@ def test_solution_agent_renders_concise_solution_document():
 
     agent = SolutionAgent()
 
-    async def fake_call_llm(*args, **kwargs):
-        return """{
+    async def fake_call_llm_response(*args, **kwargs):
+        return LLMResponse(content="""{
   "title": "自律 App 技术方案",
   "architecture_overview": "前后端分离，移动端配合后端 API 提供能力。",
   "tech_stack": ["React Native", "FastAPI", "PostgreSQL"],
@@ -790,7 +930,7 @@ def test_solution_agent_renders_concise_solution_document():
   "technical_rationale": ["React Native 适合跨平台快速交付"],
   "risks": ["提醒功能依赖系统通知权限"],
   "open_questions": ["是否支持 Apple Watch 通知"]
-}"""
+}""", usage={"prompt_tokens": 20, "completion_tokens": 40, "total_tokens": 60}, model="fake-solution-model")
 
     requirement_doc = """# 需求文档
 
@@ -815,7 +955,7 @@ def test_solution_agent_renders_concise_solution_document():
 计划管理
 """
 
-    agent.call_llm = fake_call_llm
+    agent.call_llm_response = fake_call_llm_response
     output = asyncio.run(
         agent.execute(
             AgentInput(
@@ -843,14 +983,14 @@ def test_code_agent_requires_file_plan_and_returns_multiple_files():
 
     agent = CodeAgent()
 
-    async def fake_call_llm(*args, **kwargs):
+    async def fake_call_llm_response(*args, **kwargs):
         main_py = base64.b64encode(
             b"from fastapi import FastAPI\n\napp = FastAPI()\n"
         ).decode("utf-8")
         requirements_txt = base64.b64encode(
             b"fastapi\nuvicorn\n"
         ).decode("utf-8")
-        return """<file path="app/main.py">
+        return LLMResponse(content="""<file path="app/main.py">
 <summary>FastAPI 入口</summary>
 <content_base64>
 __MAIN_PY__
@@ -861,9 +1001,9 @@ __MAIN_PY__
 <content_base64>
 __REQ_TXT__
 </content_base64>
-</file>""".replace("__MAIN_PY__", main_py).replace("__REQ_TXT__", requirements_txt)
+</file>""".replace("__MAIN_PY__", main_py).replace("__REQ_TXT__", requirements_txt), usage={"prompt_tokens": 30, "completion_tokens": 70, "total_tokens": 100}, model="fake-code-model")
 
-    agent.call_llm = fake_call_llm
+    agent.call_llm_response = fake_call_llm_response
     output = asyncio.run(
         agent.execute(
             AgentInput(
@@ -911,42 +1051,42 @@ def test_code_agent_generates_required_files_in_batches():
     agent.BATCH_SIZE = 2
     call_count = {"value": 0}
 
-    async def fake_call_llm(message: str, **kwargs):
+    async def fake_call_llm_response(message: str, **kwargs):
         call_count["value"] += 1
         if call_count["value"] == 1:
             main_py = base64.b64encode(
                 b"from fastapi import FastAPI\n\napp = FastAPI()\n"
             ).decode("utf-8")
-            return f"""<file path="app/main.py">
+            return LLMResponse(content=f"""<file path="app/main.py">
 <summary>入口</summary>
 <content_base64>
 {main_py}
 </content_base64>
 </file>
-"""
+""", usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}, model="fake-code-model")
 
         if call_count["value"] == 2:
             router_py = base64.b64encode(
                 b"from fastapi import APIRouter\n\nrouter = APIRouter()\n"
             ).decode("utf-8")
-            return f"""<file path="app/router.py">
+            return LLMResponse(content=f"""<file path="app/router.py">
 <summary>路由</summary>
 <content_base64>
 {router_py}
 </content_base64>
-</file>"""
+</file>""", usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}, model="fake-code-model")
 
         requirements_txt = base64.b64encode(
             b"fastapi\nuvicorn\n"
         ).decode("utf-8")
-        return f"""<file path="requirements.txt">
+        return LLMResponse(content=f"""<file path="requirements.txt">
 <summary>依赖</summary>
 <content_base64>
 {requirements_txt}
 </content_base64>
-</file>"""
+</file>""", usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}, model="fake-code-model")
 
-    agent.call_llm = fake_call_llm
+    agent.call_llm_response = fake_call_llm_response
     output = asyncio.run(
         agent.execute(
             AgentInput(

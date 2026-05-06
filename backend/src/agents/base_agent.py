@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Any, Dict, List
 from pydantic import BaseModel
 from src.config import get_config, get_stage_config
-from src.llm_client import LLMClient, LLMMessage
+from src.llm_client import LLMClient, LLMMessage, LLMResponse
 
 
 class AgentInput(BaseModel):
@@ -24,6 +24,8 @@ class AgentOutput(BaseModel):
     summary: str
     details: Optional[str] = None
     needs_human_review: bool = False
+    token_usage: Optional[Dict[str, int]] = None
+    model: Optional[str] = None
 
 
 class BaseAgent(ABC):
@@ -91,13 +93,13 @@ class BaseAgent(ABC):
             )
         return self._llm_client
 
-    async def call_llm(
+    async def call_llm_response(
         self,
         user_message: str,
         system_prompt: Optional[str] = None,
         expect_json: bool = False,
         temperature: Optional[float] = None,
-    ) -> str:
+    ) -> LLMResponse:
         """
         调用 LLM 的统一入口
 
@@ -108,7 +110,7 @@ class BaseAgent(ABC):
             temperature: 温度参数，覆盖默认值
 
         Returns:
-            LLM 响应的文本内容
+            包含文本、usage、model 的完整 LLM 响应
         """
         client = self._get_llm_client()
         messages = [
@@ -122,18 +124,29 @@ class BaseAgent(ABC):
         if temp != client.temperature:
             client.temperature = temp
 
+        return await client.chat(
+            messages=messages,
+            system_prompt=actual_system_prompt,
+            response_format={"type": "json_object"} if expect_json else None,
+        )
+
+    async def call_llm(
+        self,
+        user_message: str,
+        system_prompt: Optional[str] = None,
+        expect_json: bool = False,
+        temperature: Optional[float] = None,
+    ) -> str:
+        response = await self.call_llm_response(
+            user_message,
+            system_prompt=system_prompt,
+            expect_json=expect_json,
+            temperature=temperature,
+        )
         if expect_json:
-            result = await client.chat_json(
-                messages=messages,
-                system_prompt=actual_system_prompt,
-            )
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        else:
-            resp = await client.chat(
-                messages=messages,
-                system_prompt=actual_system_prompt,
-            )
-            return resp.content
+            parsed = json.loads(response.content)
+            return json.dumps(parsed, ensure_ascii=False, indent=2)
+        return response.content
 
     # ========================================================================
     # 抽象方法

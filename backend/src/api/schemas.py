@@ -30,6 +30,10 @@ class RunPipelineResponse(BaseModel):
     pipeline_id: str
 
 
+class PipelineActionResponse(BaseModel):
+    pipeline: Pipeline
+
+
 class FrontendPipelineStage(BaseModel):
     id: str
     name: str
@@ -58,6 +62,7 @@ class FrontendPipeline(BaseModel):
     projectPath: str | None = None
     projectSummary: str | None = None
     requirementDocPath: str | None = None
+    solutionDocPath: str | None = None
 
 
 class FrontendCreatePipelineRequest(BaseModel):
@@ -134,3 +139,74 @@ class FrontendActivityItem(BaseModel):
     time: str
     text: str
     type: str
+
+
+class FrontendSettingsProvider(BaseModel):
+    id: str
+    name: str
+    models: list[str]
+    color: str
+    active: bool
+    hasKey: bool
+    maskedKey: str
+
+
+class FrontendSettingsPipeline(BaseModel):
+    defaultProvider: str
+    maxAgentRetries: int
+    checkpointTimeoutMinutes: int
+    autoCreateBranch: bool
+    autoCommitCode: bool
+    autoCreateMR: bool
+    branchNamePattern: str
+    repositoryPath: str
+    semanticIndex: bool
+
+
+class FrontendSettingsGeneral(BaseModel):
+    checkpointNotifications: bool
+    pipelineCompleteNotifications: bool
+    agentFailureAlerts: bool
+    logRetentionDays: str
+    anonymousUsageStats: bool
+    appVersion: str
+    engineVersion: str
+    apiVersion: str
+
+
+class FrontendSettingsResponse(BaseModel):
+    providers: list[FrontendSettingsProvider]
+    pipeline: FrontendSettingsPipeline
+    general: FrontendSettingsGeneral
+
+
+class FrontendSettingsProviderUpdate(BaseModel):
+    id: str
+    active: bool
+    apiKey: str | None = None
+
+
+class FrontendSettingsPipelineUpdate(BaseModel):
+    defaultProvider: str
+    maxAgentRetries: int
+    checkpointTimeoutMinutes: int
+    autoCreateBranch: bool
+    autoCommitCode: bool
+    autoCreateMR: bool
+    branchNamePattern: str
+    repositoryPath: str
+    semanticIndex: bool
+
+
+class FrontendSettingsGeneralUpdate(BaseModel):
+    checkpointNotifications: bool
+    pipelineCompleteNotifications: bool
+    agentFailureAlerts: bool
+    logRetentionDays: str
+    anonymousUsageStats: bool
+
+
+class FrontendSettingsUpdateRequest(BaseModel):
+    providers: list[FrontendSettingsProviderUpdate]
+    pipeline: FrontendSettingsPipelineUpdate
+    general: FrontendSettingsGeneralUpdate

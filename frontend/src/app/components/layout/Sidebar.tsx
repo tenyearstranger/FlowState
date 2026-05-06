@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { NavLink, useLocation } from "react-router";
 import {
   LayoutDashboard,
@@ -10,11 +11,13 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { motion } from "motion/react";
+import { useApiQuery } from "../../hooks/useApiQuery";
+import { agentsApi, checkpointsApi } from "../../lib/api/services";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "概览", exact: true },
   { to: "/pipelines", icon: GitBranch, label: "流水线" },
-  { to: "/checkpoints", icon: CheckSquare, label: "审批检查点", badge: 2 },
+  { to: "/checkpoints", icon: CheckSquare, label: "审批检查点" },
   { to: "/agents", icon: Bot, label: "Agent 管理" },
   { to: "/analytics", icon: BarChart2, label: "可观测性" },
 ];
@@ -25,6 +28,21 @@ const bottomItems = [
 
 export function Sidebar() {
   const location = useLocation();
+  const sidebarQuery = useApiQuery(
+    useCallback(async (signal: AbortSignal) => {
+      const [agents, checkpoints] = await Promise.all([
+        agentsApi.list({ signal }),
+        checkpointsApi.list({ signal }),
+      ]);
+
+      return { agents, checkpoints };
+    }, []),
+    []
+  );
+  const runningAgents =
+    sidebarQuery.data?.agents.filter((agent) => agent.status === "running").length ?? 0;
+  const pendingCheckpoints =
+    sidebarQuery.data?.checkpoints.filter((checkpoint) => checkpoint.status === "pending").length ?? 0;
 
   const isActive = (to: string, exact?: boolean) => {
     if (exact) return location.pathname === to;
@@ -73,6 +91,7 @@ export function Sidebar() {
       <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
           const active = isActive(item.to, item.exact);
+          const badge = item.to === "/checkpoints" ? pendingCheckpoints : undefined;
           return (
             <NavLink key={item.to} to={item.to} end={item.exact}>
               <motion.div
@@ -121,7 +140,7 @@ export function Sidebar() {
                 >
                   {item.label}
                 </span>
-                {item.badge && (
+                {badge ? (
                   <span
                     className="relative z-10 px-1.5 py-0.5 rounded-full"
                     style={{
@@ -132,9 +151,9 @@ export function Sidebar() {
                       border: "1px solid rgba(255,80,80,0.25)",
                     }}
                   >
-                    {item.badge}
+                    {badge}
                   </span>
-                )}
+                ) : null}
               </motion.div>
             </NavLink>
           );
@@ -158,7 +177,7 @@ export function Sidebar() {
             />
           </div>
           <span style={{ fontSize: 11, color: "rgba(52,199,89,0.9)", fontWeight: 500 }}>
-            3 个 Agent 运行中
+            {sidebarQuery.loading ? "同步 Agent 状态..." : `${runningAgents} 个 Agent 运行中`}
           </span>
         </div>
 

@@ -1,4 +1,4 @@
-type Status = "running" | "completed" | "failed" | "paused" | "pending" | "idle" | "awaiting_review" | "rejected";
+type Status = "running" | "completed" | "failed" | "paused" | "pending" | "idle" | "awaiting_review" | "rejected" | "cancelled";
 
 const statusConfig: Record<Status, { label: string; color: string; bg: string; border: string; dot?: boolean }> = {
   running: { label: "运行中", color: "#5B72FF", bg: "rgba(91,114,255,0.1)", border: "rgba(91,114,255,0.2)", dot: true },
@@ -9,6 +9,7 @@ const statusConfig: Record<Status, { label: string; color: string; bg: string; b
   idle: { label: "空闲", color: "rgba(255,255,255,0.35)", bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.06)" },
   awaiting_review: { label: "等待审批", color: "#FF9F0A", bg: "rgba(255,159,10,0.1)", border: "rgba(255,159,10,0.2)", dot: true },
   rejected: { label: "已拒绝", color: "#FF453A", bg: "rgba(255,69,58,0.1)", border: "rgba(255,69,58,0.2)" },
+  cancelled: { label: "已终止", color: "#FF453A", bg: "rgba(255,69,58,0.1)", border: "rgba(255,69,58,0.2)" },
 };
 
 interface StatusBadgeProps {

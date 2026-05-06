@@ -3,12 +3,13 @@
 from enum import Enum
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class PipelineStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
+    PAUSED = "paused"
     WAITING_HUMAN = "waiting_human"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -58,9 +59,15 @@ class PipelineContext(BaseModel):
 
 class StageNode(BaseModel):
     """流水线中一个阶段节点"""
+    model_config = ConfigDict(protected_namespaces=())
+
     stage_type: StageType
     status: StageStatus = StageStatus.PENDING
     agent_output: Optional[Dict[str, Any]] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    model_name: Optional[str] = None
     human_feedback: Optional[str] = None
     human_approval: Optional[ApproveAction] = None
     started_at: Optional[datetime] = None

@@ -16,7 +16,7 @@ class TestAgent(BaseAgent):
         code_files = input_data.context.get("generated_code", {})
         feedback = input_data.human_feedback
 
-        test_files, test_results = await self._llm_generate_tests(code_files, feedback)
+        test_files, test_results, token_usage, model = await self._llm_generate_tests(code_files, feedback)
 
         passed = test_results.get("passed", 0)
         total = test_results.get("total", 0)
@@ -33,6 +33,8 @@ class TestAgent(BaseAgent):
             summary=f"测试完成：{passed}/{total} 通过",
             details=self._format_report(test_results),
             needs_human_review=False if all_pass else True,
+            token_usage=token_usage,
+            model=model,
         )
 
     async def _llm_generate_tests(self, code_files: Dict[str, str], feedback: str | None) -> tuple:
@@ -61,7 +63,8 @@ class TestAgent(BaseAgent):
         if feedback:
             user_message += f"\n\n根据以下反馈修改：\n{feedback}"
 
-        response = await self.call_llm(user_message)
+        llm_response = await self.call_llm_response(user_message)
+        response = llm_response.content
 
         # 解析测试文件
         test_files = {}
@@ -87,7 +90,7 @@ class TestAgent(BaseAgent):
                 "tests/test_app.py": f'# Auto-generated tests\n# Review required before running\n"""\n{response[:1000]}\n"""\n',
             }
 
-        return test_files, test_results
+        return test_files, test_results, llm_response.usage, llm_response.model
 
     def _format_report(self, results: dict) -> str:
         lines = [

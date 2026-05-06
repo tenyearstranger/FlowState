@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
 
 const isDev = !app.isPackaged
@@ -35,6 +35,21 @@ app.whenReady().then(() => {
     }
 
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('shell:open-path', async (_, targetPath: string) => {
+    if (!targetPath) {
+      return 'Path is required'
+    }
+    return shell.openPath(targetPath)
+  })
+
+  ipcMain.handle('shell:show-item-in-folder', async (_, targetPath: string) => {
+    if (!targetPath) {
+      return false
+    }
+    shell.showItemInFolder(targetPath)
+    return true
   })
 
   createWindow()

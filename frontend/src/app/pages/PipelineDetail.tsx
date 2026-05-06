@@ -18,10 +18,12 @@ import {
   Check,
   FolderOpen,
   FileSearch,
+  ExternalLink,
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useApiQuery } from "../hooks/useApiQuery";
 import { pipelinesApi } from "../lib/api/services";
+import { getErrorMessage } from "../lib/api/client";
 import type { PipelineStage } from "../types/pipeline";
 
 const stageColors: Record<string, string> = {
@@ -240,6 +242,9 @@ export function PipelineDetail() {
   const [selectedStage, setSelectedStage] = useState("");
   const [showLogs, setShowLogs] = useState(true);
   const [logCount, setLogCount] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<"pause" | "resume" | "cancel" | "retry" | null>(null);
+  const [pathActionMessage, setPathActionMessage] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   const pipelineQuery = useApiQuery(
@@ -320,6 +325,64 @@ export function PipelineDetail() {
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logCount]);
+
+  const syncPipeline = async () => {
+    pipelineQuery.reload();
+    logsQuery.reload();
+  };
+
+  const handlePathAction = async (
+    targetPath: string | undefined,
+    action: "open" | "reveal",
+    label: string
+  ) => {
+    if (!targetPath) {
+      return;
+    }
+
+    setPathActionMessage(null);
+
+    try {
+      if (window.api) {
+        if (action === "reveal" && window.api.showItemInFolder) {
+          await window.api.showItemInFolder(targetPath);
+          return;
+        }
+
+        if (window.api.openPath) {
+          const result = await window.api.openPath(targetPath);
+          if (!result) {
+            return;
+          }
+          throw new Error(result);
+        }
+      }
+
+      await navigator.clipboard.writeText(targetPath);
+      setPathActionMessage(`${label}路径已复制，请在本地文件管理器中打开。`);
+    } catch (error) {
+      setPathActionMessage(getErrorMessage(error));
+    }
+  };
+
+  const runPipelineAction = async (
+    action: "pause" | "resume" | "cancel" | "retry",
+    request: () => Promise<unknown>
+  ) => {
+    if (!id || actionLoading) {
+      return;
+    }
+    setActionError(null);
+    setActionLoading(action);
+    try {
+      await request();
+      await syncPipeline();
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   if (pipelineQuery.loading && !pipeline) {
     return (
@@ -408,6 +471,9 @@ export function PipelineDetail() {
           {pipeline.status === "running" && (
             <>
               <button
+                onClick={() =>
+                  runPipelineAction("pause", () => pipelinesApi.pause(pipeline.id))
+                }
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
                 style={{
                   background: "rgba(255,159,10,0.1)",
@@ -417,9 +483,12 @@ export function PipelineDetail() {
                   cursor: "pointer",
                 }}
               >
-                <Pause size={12} /> 暂停
+                <Pause size={12} /> {actionLoading === "pause" ? "暂停中..." : "暂停"}
               </button>
               <button
+                onClick={() =>
+                  runPipelineAction("cancel", () => pipelinesApi.cancel(pipeline.id))
+                }
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
                 style={{
                   background: "rgba(255,69,58,0.08)",
@@ -429,12 +498,25 @@ export function PipelineDetail() {
                   cursor: "pointer",
                 }}
               >
-                <StopCircle size={12} /> 终止
+                <StopCircle size={12} /> {actionLoading === "cancel" ? "终止中..." : "终止"}
               </button>
             </>
           )}
           {(pipeline.status === "paused" || pipeline.status === "failed") && (
             <button
+              onClick={() => {
+                if (pipeline.status === "paused" && activeStage?.status === "awaiting_review") {
+                  navigate("/checkpoints");
+                  return;
+                }
+                runPipelineAction(
+                  pipeline.status === "paused" ? "resume" : "retry",
+                  () =>
+                    pipeline.status === "paused"
+                      ? pipelinesApi.resume(pipeline.id)
+                      : pipelinesApi.retry(pipeline.id)
+                );
+              }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
               style={{
                 background: "rgba(91,114,255,0.1)",
@@ -444,13 +526,27 @@ export function PipelineDetail() {
                 cursor: "pointer",
               }}
             >
-              {pipeline.status === "paused" ? <><Play size={12} /> 继续</> : <><RotateCcw size={12} /> 重试</>}
+              {pipeline.status === "paused" ? (
+                <>
+                  <Play size={12} /> {activeStage?.status === "awaiting_review" ? "前往审批" : actionLoading === "resume" ? "继续中..." : "继续"}
+                </>
+              ) : (
+                <>
+                  <RotateCcw size={12} /> {actionLoading === "retry" ? "重试中..." : "重试"}
+                </>
+              )}
             </button>
           )}
         </div>
       </div>
 
-      {(pipeline.projectPath || pipeline.projectSummary || pipeline.requirementDocPath) && (
+      {actionError && (
+        <div className="mx-6 mt-4 rounded-xl px-4 py-3" style={{ background: "rgba(255,69,58,0.06)", border: "1px solid rgba(255,69,58,0.18)", color: "rgba(255,255,255,0.78)", fontSize: 12 }}>
+          {actionError}
+        </div>
+      )}
+
+      {(pipeline.projectPath || pipeline.projectSummary || pipeline.requirementDocPath || pipeline.solutionDocPath) && (
         <div
           className="mx-6 mt-5 rounded-2xl p-5 flex-shrink-0"
           style={{
@@ -467,12 +563,30 @@ export function PipelineDetail() {
 
           {pipeline.projectPath && (
             <div className="mb-4">
-              <div
-                className="flex items-center gap-2 mb-2"
-                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-              >
-                <FolderOpen size={11} />
-                项目本地目录
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div
+                  className="flex items-center gap-2"
+                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                >
+                  <FolderOpen size={11} />
+                  项目本地目录
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePathAction(pipeline.projectPath, "reveal", "项目目录")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      color: "rgba(255,255,255,0.62)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <FolderOpen size={11} />
+                    打开目录
+                  </button>
+                </div>
               </div>
               <div
                 className="rounded-xl px-4 py-3"
@@ -517,12 +631,44 @@ export function PipelineDetail() {
 
           {pipeline.requirementDocPath && (
             <div className="mt-4">
-              <div
-                className="flex items-center gap-2 mb-2"
-                style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
-              >
-                <Terminal size={11} />
-                需求文档落盘路径
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div
+                  className="flex items-center gap-2"
+                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                >
+                  <Terminal size={11} />
+                  需求文档落盘路径
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePathAction(pipeline.requirementDocPath, "open", "需求文档")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "rgba(91,114,255,0.08)",
+                      border: "1px solid rgba(91,114,255,0.18)",
+                      color: "#A0ABFF",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <ExternalLink size={11} />
+                    打开文件
+                  </button>
+                  <button
+                    onClick={() => handlePathAction(pipeline.requirementDocPath, "reveal", "需求文档")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      color: "rgba(255,255,255,0.62)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <FolderOpen size={11} />
+                    定位文件
+                  </button>
+                </div>
               </div>
               <div
                 className="rounded-xl px-4 py-3"
@@ -537,6 +683,77 @@ export function PipelineDetail() {
               >
                 {pipeline.requirementDocPath}
               </div>
+            </div>
+          )}
+
+          {pipeline.solutionDocPath && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div
+                  className="flex items-center gap-2"
+                  style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                >
+                  <Terminal size={11} />
+                  方案文档落盘路径
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePathAction(pipeline.solutionDocPath, "open", "方案文档")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "rgba(162,89,255,0.08)",
+                      border: "1px solid rgba(162,89,255,0.18)",
+                      color: "#C7A7FF",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <ExternalLink size={11} />
+                    打开文件
+                  </button>
+                  <button
+                    onClick={() => handlePathAction(pipeline.solutionDocPath, "reveal", "方案文档")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg"
+                    style={{
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      color: "rgba(255,255,255,0.62)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <FolderOpen size={11} />
+                    定位文件
+                  </button>
+                </div>
+              </div>
+              <div
+                className="rounded-xl px-4 py-3"
+                style={{
+                  background: "rgba(0,0,0,0.22)",
+                  border: "1px solid rgba(255,255,255,0.06)",
+                  color: "rgba(255,255,255,0.72)",
+                  fontSize: 12,
+                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                  wordBreak: "break-all",
+                }}
+              >
+                {pipeline.solutionDocPath}
+              </div>
+            </div>
+          )}
+
+          {pathActionMessage && (
+            <div
+              className="mt-4 rounded-xl px-4 py-3"
+              style={{
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.72)",
+                fontSize: 12,
+              }}
+            >
+              {pathActionMessage}
             </div>
           )}
         </div>

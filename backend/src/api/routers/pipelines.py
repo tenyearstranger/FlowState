@@ -5,6 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from src.api.deps import get_pipeline_service
 from src.api.schemas import (
     CreatePipelineRequest,
+    PipelineActionResponse,
     PipelineEnvelope,
     PipelineListResponse,
     RunPipelineResponse,
@@ -77,3 +78,51 @@ async def delete_pipeline(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{pipeline_id}/pause", response_model=PipelineActionResponse)
+async def pause_pipeline(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> PipelineActionResponse:
+    try:
+        pipeline = await service.pause_pipeline(pipeline_id)
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return PipelineActionResponse(pipeline=pipeline)
+
+
+@router.post("/{pipeline_id}/resume", response_model=PipelineActionResponse)
+async def resume_pipeline(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> PipelineActionResponse:
+    try:
+        pipeline = await service.resume_pipeline(pipeline_id)
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return PipelineActionResponse(pipeline=pipeline)
+
+
+@router.post("/{pipeline_id}/cancel", response_model=PipelineActionResponse)
+async def cancel_pipeline(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> PipelineActionResponse:
+    try:
+        pipeline = await service.cancel_pipeline(pipeline_id)
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return PipelineActionResponse(pipeline=pipeline)
+
+
+@router.post("/{pipeline_id}/retry", response_model=PipelineActionResponse)
+async def retry_pipeline(
+    pipeline_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> PipelineActionResponse:
+    try:
+        pipeline = await service.retry_pipeline(pipeline_id)
+    except PipelineValidationError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return PipelineActionResponse(pipeline=pipeline)
