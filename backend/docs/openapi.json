@@ -1,0 +1,3147 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FlowState API",
+    "description": "A minimal, standalone RESTful API scaffold for backend development.",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Root  Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Healthcheck",
+        "operationId": "healthcheck_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dev/seed": {
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Seed Demo Data",
+        "operationId": "seed_demo_data_api_dev_seed_post",
+        "parameters": [
+          {
+            "name": "reset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Reset"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FrontendPipeline"
+                  },
+                  "title": "Response Seed Demo Data Api Dev Seed Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines": {
+      "get": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "List Pipelines Ui",
+        "operationId": "list_pipelines_ui_api_pipelines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FrontendPipeline"
+                  },
+                  "type": "array",
+                  "title": "Response List Pipelines Ui Api Pipelines Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Create Pipeline Ui",
+        "operationId": "create_pipeline_ui_api_pipelines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrontendCreatePipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}": {
+      "get": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Get Pipeline Ui",
+        "operationId": "get_pipeline_ui_api_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/logs": {
+      "get": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Get Pipeline Logs Ui",
+        "operationId": "get_pipeline_logs_ui_api_pipelines__pipeline_id__logs_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response Get Pipeline Logs Ui Api Pipelines  Pipeline Id  Logs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/pause": {
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Pause Pipeline Ui",
+        "operationId": "pause_pipeline_ui_api_pipelines__pipeline_id__pause_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/resume": {
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Resume Pipeline Ui",
+        "operationId": "resume_pipeline_ui_api_pipelines__pipeline_id__resume_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/cancel": {
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Cancel Pipeline Ui",
+        "operationId": "cancel_pipeline_ui_api_pipelines__pipeline_id__cancel_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/pipelines/{pipeline_id}/retry": {
+      "post": {
+        "tags": [
+          "pipelines-ui"
+        ],
+        "summary": "Retry Pipeline Ui",
+        "operationId": "retry_pipeline_ui_api_pipelines__pipeline_id__retry_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendPipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "List Agents",
+        "operationId": "list_agents_api_agents_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FrontendAgent"
+                  },
+                  "type": "array",
+                  "title": "Response List Agents Api Agents Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkpoints": {
+      "get": {
+        "tags": [
+          "checkpoints"
+        ],
+        "summary": "List Checkpoints",
+        "operationId": "list_checkpoints_api_checkpoints_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "all",
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/FrontendCheckpoint"
+                  },
+                  "title": "Response List Checkpoints Api Checkpoints Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkpoints/{checkpoint_id}/approve": {
+      "post": {
+        "tags": [
+          "checkpoints"
+        ],
+        "summary": "Approve Checkpoint",
+        "operationId": "approve_checkpoint_api_checkpoints__checkpoint_id__approve_post",
+        "parameters": [
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkpoint Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendCheckpoint"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkpoints/{checkpoint_id}/confirm-deps": {
+      "post": {
+        "tags": [
+          "checkpoints"
+        ],
+        "summary": "Confirm Deps Checkpoint",
+        "description": "Testing stage Phase 1: confirm dep installation and trigger Phase 2 (install + run tests).",
+        "operationId": "confirm_deps_checkpoint_api_checkpoints__checkpoint_id__confirm_deps_post",
+        "parameters": [
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkpoint Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendCheckpoint"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/checkpoints/{checkpoint_id}/reject": {
+      "post": {
+        "tags": [
+          "checkpoints"
+        ],
+        "summary": "Reject Checkpoint",
+        "operationId": "reject_checkpoint_api_checkpoints__checkpoint_id__reject_post",
+        "parameters": [
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkpoint Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectCheckpointRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendCheckpoint"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analytics": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "Get Analytics",
+        "operationId": "get_analytics_api_analytics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendAnalyticsOverview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/activities/recent": {
+      "get": {
+        "tags": [
+          "activities"
+        ],
+        "summary": "List Recent Activities",
+        "operationId": "list_recent_activities_api_activities_recent_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FrontendActivityItem"
+                  },
+                  "type": "array",
+                  "title": "Response List Recent Activities Api Activities Recent Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "List Pipelines",
+        "operationId": "list_pipelines_api_v1_pipelines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Create Pipeline",
+        "operationId": "create_pipeline_api_v1_pipelines_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePipelineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Get Pipeline",
+        "operationId": "get_pipeline_api_v1_pipelines__pipeline_id__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pipeline"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Delete Pipeline",
+        "operationId": "delete_pipeline_api_v1_pipelines__pipeline_id__delete",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/run": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Run Pipeline",
+        "operationId": "run_pipeline_api_v1_pipelines__pipeline_id__run_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPipelineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/pause": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Pause Pipeline",
+        "operationId": "pause_pipeline_api_v1_pipelines__pipeline_id__pause_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/resume": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Resume Pipeline",
+        "operationId": "resume_pipeline_api_v1_pipelines__pipeline_id__resume_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/cancel": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Cancel Pipeline",
+        "operationId": "cancel_pipeline_api_v1_pipelines__pipeline_id__cancel_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/retry": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Retry Pipeline",
+        "operationId": "retry_pipeline_api_v1_pipelines__pipeline_id__retry_post",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git/status": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Get Git Status",
+        "operationId": "get_git_status_api_v1_pipelines__pipeline_id__git_status_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git/diff": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Get Git Diff",
+        "operationId": "get_git_diff_api_v1_pipelines__pipeline_id__git_diff_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git/diff/{stage}": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Get Git Diff For Stage",
+        "operationId": "get_git_diff_for_stage_api_v1_pipelines__pipeline_id__git_diff__stage__get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Stage"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git/log": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Get Git Log",
+        "operationId": "get_git_log_api_v1_pipelines__pipeline_id__git_log_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git/pr-command": {
+      "get": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Get Pr Command",
+        "operationId": "get_pr_command_api_v1_pipelines__pipeline_id__git_pr_command_get",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pipelines/{pipeline_id}/git": {
+      "delete": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Cleanup Pipeline Git",
+        "operationId": "cleanup_pipeline_git_api_v1_pipelines__pipeline_id__git_delete",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pipeline Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Settings",
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendSettingsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Settings",
+        "operationId": "update_settings_api_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrontendSettingsUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendSettingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/validate-llm": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Validate Llm Settings",
+        "operationId": "validate_llm_settings_api_settings_validate_llm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FrontendSettingsValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FrontendSettingsValidateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApproveAction": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "reject",
+          "revise"
+        ],
+        "title": "ApproveAction"
+      },
+      "CreatePipelineRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Title",
+            "default": ""
+          },
+          "project_path": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Project Path",
+            "default": ""
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Requirement"
+          }
+        },
+        "type": "object",
+        "required": [
+          "requirement"
+        ],
+        "title": "CreatePipelineRequest"
+      },
+      "FrontendActivityItem": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "text",
+          "type"
+        ],
+        "title": "FrontendActivityItem"
+      },
+      "FrontendAgent": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "tasksCompleted": {
+            "type": "integer",
+            "title": "Taskscompleted"
+          },
+          "avgDuration": {
+            "type": "integer",
+            "title": "Avgduration"
+          },
+          "avgTokens": {
+            "type": "integer",
+            "title": "Avgtokens"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "role",
+          "description",
+          "model",
+          "provider",
+          "status",
+          "tasksCompleted",
+          "avgDuration",
+          "avgTokens",
+          "color"
+        ],
+        "title": "FrontendAgent"
+      },
+      "FrontendAgentSuccessDatum": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rate": {
+            "type": "number",
+            "title": "Rate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "rate"
+        ],
+        "title": "FrontendAgentSuccessDatum"
+      },
+      "FrontendAnalyticsOverview": {
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/FrontendAnalyticsSummary"
+          },
+          "pipelineRuns": {
+            "items": {
+              "$ref": "#/components/schemas/FrontendPipelineRunDatum"
+            },
+            "type": "array",
+            "title": "Pipelineruns"
+          },
+          "tokenUsage": {
+            "items": {
+              "$ref": "#/components/schemas/FrontendTokenUsageDatum"
+            },
+            "type": "array",
+            "title": "Tokenusage"
+          },
+          "stageDurations": {
+            "items": {
+              "$ref": "#/components/schemas/FrontendStageDurationDatum"
+            },
+            "type": "array",
+            "title": "Stagedurations"
+          },
+          "agentSuccessRates": {
+            "items": {
+              "$ref": "#/components/schemas/FrontendAgentSuccessDatum"
+            },
+            "type": "array",
+            "title": "Agentsuccessrates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "summary",
+          "pipelineRuns",
+          "tokenUsage",
+          "stageDurations",
+          "agentSuccessRates"
+        ],
+        "title": "FrontendAnalyticsOverview"
+      },
+      "FrontendAnalyticsSummary": {
+        "properties": {
+          "totalRuns": {
+            "type": "integer",
+            "title": "Totalruns"
+          },
+          "totalSuccess": {
+            "type": "integer",
+            "title": "Totalsuccess"
+          },
+          "totalTokens": {
+            "type": "integer",
+            "title": "Totaltokens"
+          },
+          "averageDurationMinutes": {
+            "type": "number",
+            "title": "Averagedurationminutes"
+          },
+          "mergedChanges": {
+            "type": "integer",
+            "title": "Mergedchanges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "totalRuns",
+          "totalSuccess",
+          "totalTokens",
+          "averageDurationMinutes",
+          "mergedChanges"
+        ],
+        "title": "FrontendAnalyticsSummary"
+      },
+      "FrontendCheckpoint": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "pipelineId": {
+            "type": "string",
+            "title": "Pipelineid"
+          },
+          "pipelineName": {
+            "type": "string",
+            "title": "Pipelinename"
+          },
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "stageIndex": {
+            "type": "integer",
+            "title": "Stageindex"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output"
+          },
+          "rejectReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejectreason"
+          },
+          "subPhase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subphase"
+          },
+          "depsManifest": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depsmanifest"
+          },
+          "reviewScore": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewscore"
+          },
+          "reviewIssues": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewissues"
+          },
+          "passRate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passrate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "pipelineId",
+          "pipelineName",
+          "stage",
+          "stageIndex",
+          "status",
+          "createdAt",
+          "output"
+        ],
+        "title": "FrontendCheckpoint"
+      },
+      "FrontendCreatePipelineRequest": {
+        "properties": {
+          "projectPath": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Projectpath"
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Requirement"
+          }
+        },
+        "type": "object",
+        "required": [
+          "projectPath",
+          "requirement"
+        ],
+        "title": "FrontendCreatePipelineRequest"
+      },
+      "FrontendPipeline": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "integer",
+            "title": "Progress"
+          },
+          "currentStage": {
+            "type": "integer",
+            "title": "Currentstage"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/FrontendPipelineStage"
+            },
+            "type": "array",
+            "title": "Stages"
+          },
+          "createdAt": {
+            "type": "string",
+            "title": "Createdat"
+          },
+          "updatedAt": {
+            "type": "string",
+            "title": "Updatedat"
+          },
+          "template": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template"
+          },
+          "projectPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectpath"
+          },
+          "projectSummary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectsummary"
+          },
+          "requirementDocPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirementdocpath"
+          },
+          "solutionDocPath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solutiondocpath"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "status",
+          "progress",
+          "currentStage",
+          "stages",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "FrontendPipeline"
+      },
+      "FrontendPipelineRunDatum": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "title": "Day"
+          },
+          "success": {
+            "type": "integer",
+            "title": "Success"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "day",
+          "success",
+          "failed",
+          "total"
+        ],
+        "title": "FrontendPipelineRunDatum"
+      },
+      "FrontendPipelineStage": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "nameEn": {
+            "type": "string",
+            "title": "Nameen"
+          },
+          "agent": {
+            "type": "string",
+            "title": "Agent"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "isCheckpoint": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ischeckpoint"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startedat"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "subPhase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subphase"
+          },
+          "depsManifest": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depsmanifest"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "nameEn",
+          "agent",
+          "status"
+        ],
+        "title": "FrontendPipelineStage"
+      },
+      "FrontendSettingsGeneral": {
+        "properties": {
+          "checkpointNotifications": {
+            "type": "boolean",
+            "title": "Checkpointnotifications"
+          },
+          "pipelineCompleteNotifications": {
+            "type": "boolean",
+            "title": "Pipelinecompletenotifications"
+          },
+          "agentFailureAlerts": {
+            "type": "boolean",
+            "title": "Agentfailurealerts"
+          },
+          "logRetentionDays": {
+            "type": "string",
+            "title": "Logretentiondays"
+          },
+          "anonymousUsageStats": {
+            "type": "boolean",
+            "title": "Anonymoususagestats"
+          },
+          "appVersion": {
+            "type": "string",
+            "title": "Appversion"
+          },
+          "engineVersion": {
+            "type": "string",
+            "title": "Engineversion"
+          },
+          "apiVersion": {
+            "type": "string",
+            "title": "Apiversion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checkpointNotifications",
+          "pipelineCompleteNotifications",
+          "agentFailureAlerts",
+          "logRetentionDays",
+          "anonymousUsageStats",
+          "appVersion",
+          "engineVersion",
+          "apiVersion"
+        ],
+        "title": "FrontendSettingsGeneral"
+      },
+      "FrontendSettingsGeneralUpdate": {
+        "properties": {
+          "checkpointNotifications": {
+            "type": "boolean",
+            "title": "Checkpointnotifications"
+          },
+          "pipelineCompleteNotifications": {
+            "type": "boolean",
+            "title": "Pipelinecompletenotifications"
+          },
+          "agentFailureAlerts": {
+            "type": "boolean",
+            "title": "Agentfailurealerts"
+          },
+          "logRetentionDays": {
+            "type": "string",
+            "title": "Logretentiondays"
+          },
+          "anonymousUsageStats": {
+            "type": "boolean",
+            "title": "Anonymoususagestats"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checkpointNotifications",
+          "pipelineCompleteNotifications",
+          "agentFailureAlerts",
+          "logRetentionDays",
+          "anonymousUsageStats"
+        ],
+        "title": "FrontendSettingsGeneralUpdate"
+      },
+      "FrontendSettingsLLM": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl"
+          },
+          "apiKey": {
+            "type": "string",
+            "title": "Apikey"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "baseUrl",
+          "apiKey"
+        ],
+        "title": "FrontendSettingsLLM"
+      },
+      "FrontendSettingsLLMUpdate": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl"
+          },
+          "apiKey": {
+            "type": "string",
+            "title": "Apikey"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "baseUrl",
+          "apiKey"
+        ],
+        "title": "FrontendSettingsLLMUpdate"
+      },
+      "FrontendSettingsPipeline": {
+        "properties": {
+          "defaultProvider": {
+            "type": "string",
+            "title": "Defaultprovider"
+          },
+          "maxAgentRetries": {
+            "type": "integer",
+            "title": "Maxagentretries"
+          },
+          "checkpointTimeoutMinutes": {
+            "type": "integer",
+            "title": "Checkpointtimeoutminutes"
+          },
+          "autoCreateBranch": {
+            "type": "boolean",
+            "title": "Autocreatebranch"
+          },
+          "autoCommitCode": {
+            "type": "boolean",
+            "title": "Autocommitcode"
+          },
+          "autoCreateMR": {
+            "type": "boolean",
+            "title": "Autocreatemr"
+          },
+          "branchNamePattern": {
+            "type": "string",
+            "title": "Branchnamepattern"
+          },
+          "repositoryPath": {
+            "type": "string",
+            "title": "Repositorypath"
+          },
+          "semanticIndex": {
+            "type": "boolean",
+            "title": "Semanticindex"
+          }
+        },
+        "type": "object",
+        "required": [
+          "defaultProvider",
+          "maxAgentRetries",
+          "checkpointTimeoutMinutes",
+          "autoCreateBranch",
+          "autoCommitCode",
+          "autoCreateMR",
+          "branchNamePattern",
+          "repositoryPath",
+          "semanticIndex"
+        ],
+        "title": "FrontendSettingsPipeline"
+      },
+      "FrontendSettingsPipelineUpdate": {
+        "properties": {
+          "defaultProvider": {
+            "type": "string",
+            "title": "Defaultprovider"
+          },
+          "maxAgentRetries": {
+            "type": "integer",
+            "title": "Maxagentretries"
+          },
+          "checkpointTimeoutMinutes": {
+            "type": "integer",
+            "title": "Checkpointtimeoutminutes"
+          },
+          "autoCreateBranch": {
+            "type": "boolean",
+            "title": "Autocreatebranch"
+          },
+          "autoCommitCode": {
+            "type": "boolean",
+            "title": "Autocommitcode"
+          },
+          "autoCreateMR": {
+            "type": "boolean",
+            "title": "Autocreatemr"
+          },
+          "branchNamePattern": {
+            "type": "string",
+            "title": "Branchnamepattern"
+          },
+          "repositoryPath": {
+            "type": "string",
+            "title": "Repositorypath"
+          },
+          "semanticIndex": {
+            "type": "boolean",
+            "title": "Semanticindex"
+          }
+        },
+        "type": "object",
+        "required": [
+          "defaultProvider",
+          "maxAgentRetries",
+          "checkpointTimeoutMinutes",
+          "autoCreateBranch",
+          "autoCommitCode",
+          "autoCreateMR",
+          "branchNamePattern",
+          "repositoryPath",
+          "semanticIndex"
+        ],
+        "title": "FrontendSettingsPipelineUpdate"
+      },
+      "FrontendSettingsResponse": {
+        "properties": {
+          "llm": {
+            "$ref": "#/components/schemas/FrontendSettingsLLM"
+          },
+          "agentConfigs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FrontendSettingsLLM"
+            },
+            "type": "object",
+            "title": "Agentconfigs"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/FrontendSettingsPipeline"
+          },
+          "general": {
+            "$ref": "#/components/schemas/FrontendSettingsGeneral"
+          }
+        },
+        "type": "object",
+        "required": [
+          "llm",
+          "agentConfigs",
+          "pipeline",
+          "general"
+        ],
+        "title": "FrontendSettingsResponse"
+      },
+      "FrontendSettingsUpdateRequest": {
+        "properties": {
+          "llm": {
+            "$ref": "#/components/schemas/FrontendSettingsLLMUpdate"
+          },
+          "agentConfigs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FrontendSettingsLLMUpdate"
+            },
+            "type": "object",
+            "title": "Agentconfigs"
+          },
+          "pipeline": {
+            "$ref": "#/components/schemas/FrontendSettingsPipelineUpdate"
+          },
+          "general": {
+            "$ref": "#/components/schemas/FrontendSettingsGeneralUpdate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "llm",
+          "pipeline",
+          "general"
+        ],
+        "title": "FrontendSettingsUpdateRequest"
+      },
+      "FrontendSettingsValidateRequest": {
+        "properties": {
+          "agentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agentid"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/FrontendSettingsLLMUpdate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "llm"
+        ],
+        "title": "FrontendSettingsValidateRequest"
+      },
+      "FrontendSettingsValidateResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "message",
+          "provider",
+          "model"
+        ],
+        "title": "FrontendSettingsValidateResponse"
+      },
+      "FrontendStageDurationDatum": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "avg": {
+            "type": "integer",
+            "title": "Avg"
+          },
+          "p95": {
+            "type": "integer",
+            "title": "P95"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "avg",
+          "p95"
+        ],
+        "title": "FrontendStageDurationDatum"
+      },
+      "FrontendTokenUsageDatum": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "title": "Time"
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "tokens"
+        ],
+        "title": "FrontendTokenUsageDatum"
+      },
+      "GitContext": {
+        "properties": {
+          "mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GitMode"
+              }
+            ],
+            "default": "disabled"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "repo_root": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo Root"
+          },
+          "base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Branch"
+          },
+          "base_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Commit"
+          },
+          "worktree_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktree Path"
+          },
+          "working_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Working Branch"
+          },
+          "initialized": {
+            "type": "boolean",
+            "title": "Initialized",
+            "default": false
+          },
+          "stage_commits": {
+            "items": {
+              "$ref": "#/components/schemas/StageCommit"
+            },
+            "type": "array",
+            "title": "Stage Commits"
+          },
+          "total_files_changed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Total Files Changed"
+          },
+          "head_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Commit"
+          },
+          "diff_stats": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diff Stats"
+          },
+          "pr_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Title"
+          },
+          "pr_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Description"
+          },
+          "pr_command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Command"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          }
+        },
+        "type": "object",
+        "title": "GitContext"
+      },
+      "GitMode": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "worktree"
+        ],
+        "title": "GitMode"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "Pipeline": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PipelineStatus"
+              }
+            ],
+            "default": "pending"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageNode"
+            },
+            "type": "array",
+            "title": "Stages"
+          },
+          "context": {
+            "$ref": "#/components/schemas/PipelineContext"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "title": "Pipeline",
+        "description": "完整研发流水线"
+      },
+      "PipelineActionResponse": {
+        "properties": {
+          "pipeline": {
+            "$ref": "#/components/schemas/Pipeline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipeline"
+        ],
+        "title": "PipelineActionResponse"
+      },
+      "PipelineContext": {
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "title": "Project Path",
+            "default": ""
+          },
+          "project_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Summary"
+          },
+          "requirement_raw": {
+            "type": "string",
+            "title": "Requirement Raw",
+            "default": ""
+          },
+          "requirement_doc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Doc"
+          },
+          "requirement_doc_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Doc Path"
+          },
+          "solution_doc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solution Doc"
+          },
+          "solution_doc_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solution Doc Path"
+          },
+          "solution_structured": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solution Structured"
+          },
+          "generated_code": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Code"
+          },
+          "test_report": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Report"
+          },
+          "review_report": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Report"
+          },
+          "delivery_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Result"
+          },
+          "code_diff": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Diff"
+          },
+          "git": {
+            "$ref": "#/components/schemas/GitContext"
+          }
+        },
+        "type": "object",
+        "title": "PipelineContext",
+        "description": "贯穿整个 Pipeline 的上下文"
+      },
+      "PipelineEnvelope": {
+        "properties": {
+          "pipeline": {
+            "$ref": "#/components/schemas/Pipeline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pipeline"
+        ],
+        "title": "PipelineEnvelope"
+      },
+      "PipelineListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Pipeline"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "PipelineListResponse"
+      },
+      "PipelineStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "paused",
+          "waiting_human",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "title": "PipelineStatus"
+      },
+      "RejectCheckpointRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "RejectCheckpointRequest"
+      },
+      "RunPipelineResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "pipeline_id": {
+            "type": "string",
+            "title": "Pipeline Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "pipeline_id"
+        ],
+        "title": "RunPipelineResponse"
+      },
+      "StageCommit": {
+        "properties": {
+          "stage_type": {
+            "$ref": "#/components/schemas/StageType"
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha"
+          },
+          "commit_message": {
+            "type": "string",
+            "title": "Commit Message"
+          },
+          "committed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Committed At"
+          },
+          "files_changed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files Changed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage_type",
+          "commit_sha",
+          "commit_message",
+          "committed_at"
+        ],
+        "title": "StageCommit",
+        "description": "每个 stage 完成时的 commit 锚点。"
+      },
+      "StageNode": {
+        "properties": {
+          "stage_type": {
+            "$ref": "#/components/schemas/StageType"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StageStatus"
+              }
+            ],
+            "default": "pending"
+          },
+          "agent_output": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Output"
+          },
+          "prompt_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Tokens"
+          },
+          "completion_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Tokens"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "human_feedback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Human Feedback"
+          },
+          "human_approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApproveAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sub_phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Phase"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "retry_count": {
+            "type": "integer",
+            "title": "Retry Count",
+            "default": 0
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "default": 3
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage_type"
+        ],
+        "title": "StageNode",
+        "description": "流水线中一个阶段节点"
+      },
+      "StageStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "waiting_human",
+          "approved",
+          "rejected",
+          "completed",
+          "failed"
+        ],
+        "title": "StageStatus"
+      },
+      "StageType": {
+        "type": "string",
+        "enum": [
+          "requirement_analysis",
+          "solution_design",
+          "coding",
+          "testing",
+          "code_review",
+          "delivery"
+        ],
+        "title": "StageType"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8000",
+      "description": "Local development server"
+    },
+    {
+      "url": "http://localhost:8000",
+      "description": "Alternate local development server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "meta",
+      "description": "API root metadata endpoints."
+    },
+    {
+      "name": "health",
+      "description": "Health and readiness checks."
+    },
+    {
+      "name": "pipelines-ui",
+      "description": "Frontend-facing pipeline endpoints used by the Electron/Vite app."
+    },
+    {
+      "name": "pipelines",
+      "description": "Canonical v1 pipeline CRUD and lifecycle endpoints."
+    },
+    {
+      "name": "checkpoints",
+      "description": "Human approval and rejection workflow endpoints."
+    },
+    {
+      "name": "agents",
+      "description": "Agent status, model, and usage summary endpoints."
+    },
+    {
+      "name": "analytics",
+      "description": "Dashboard and observability aggregation endpoints."
+    },
+    {
+      "name": "activities",
+      "description": "Recent activity feed endpoints."
+    },
+    {
+      "name": "git",
+      "description": "Pipeline-scoped Git status, diff, and cleanup endpoints."
+    },
+    {
+      "name": "settings",
+      "description": "Application and per-agent configuration endpoints."
+    }
+  ]
+}

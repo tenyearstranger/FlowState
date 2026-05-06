@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ class CodeAgent(BaseAgent):
     职责：基于技术方案中的 tech stack 与 file plan 生成多文件代码
     """
 
-    BATCH_SIZE = 1
+    BATCH_SIZE = 3
     MAX_BATCH_RETRIES = 3
     CONTEXT_FILE_MAX_CHARS = 1500
 
@@ -83,12 +84,28 @@ class CodeAgent(BaseAgent):
         }
         model_name = self.model_name
         total_batches = len(list(self._chunk_file_plan(target_files, self.BATCH_SIZE)))
+        gen_start = time.time()
+
+        print(
+            f"\n{'='*60}\n"
+            f"[CodeAgent] 开始生成代码\n"
+            f"  文件总数: {len(target_files)}  批次大小: {self.BATCH_SIZE}  共 {total_batches} 批\n"
+            f"  文件清单: {', '.join(f['path'] for f in target_files)}\n"
+            f"{'='*60}"
+        )
 
         for batch_index, batch in enumerate(self._chunk_file_plan(target_files, self.BATCH_SIZE), start=1):
             batch_files: dict[str, str] = {}
             pending_batch = list(batch)
+            batch_file_names = ", ".join(item["path"] for item in pending_batch)
+            print(f"\n[CodeAgent] ▶ Batch {batch_index}/{total_batches}: {batch_file_names}")
+            batch_start = time.time()
 
             for retry_index in range(1, self.MAX_BATCH_RETRIES + 1):
+                if retry_index > 1:
+                    missing = ", ".join(item["path"] for item in pending_batch)
+                    print(f"[CodeAgent]   ↻ 重试 {retry_index}/{self.MAX_BATCH_RETRIES}，缺失: {missing}")
+
                 user_message = self._build_batch_prompt(
                     req=req,
                     solution=solution,
@@ -124,6 +141,7 @@ class CodeAgent(BaseAgent):
                     except Exception as error:
                         if retry_index >= self.MAX_BATCH_RETRIES:
                             raise self._build_parse_error(response_text) from error
+                        print(f"[CodeAgent]   ✗ 解析失败，将重试: {error}")
                         continue
 
                 filtered_new_files = {
@@ -149,9 +167,27 @@ class CodeAgent(BaseAgent):
                 raise ValueError(f"代码生成缺少目标文件: {missing_paths}")
 
             generated_files.update(batch_files)
+            batch_elapsed = time.time() - batch_start
+            tokens_so_far = usage_totals["total_tokens"]
+            written = ", ".join(batch_files.keys())
+            print(
+                f"[CodeAgent]   ✅ Batch {batch_index}/{total_batches} 完成 "
+                f"({batch_elapsed:.1f}s, 累计 {tokens_so_far} tokens)\n"
+                f"            写入: {written}"
+            )
 
         # Post-generation consistency review: fix cross-file import/interface mismatches
+        print(f"\n[CodeAgent] 🔍 一致性检查（共 {len(generated_files)} 个文件）...")
+        review_start = time.time()
         generated_files = await self._consistency_review(generated_files, usage_totals)
+        print(f"[CodeAgent] ✅ 一致性检查完成 ({time.time() - review_start:.1f}s)")
+        total_elapsed = time.time() - gen_start
+        print(
+            f"\n[CodeAgent] 🎉 代码生成全部完成！\n"
+            f"  文件数: {len(generated_files)}  总耗时: {total_elapsed:.1f}s  "
+            f"总 tokens: {usage_totals['total_tokens']}\n"
+            f"{'='*60}\n"
+        )
 
         final_usage = usage_totals if any(usage_totals.values()) else None
         return self._validate_required_files(generated_files, target_files), final_usage, model_name
@@ -270,9 +306,12 @@ class CodeAgent(BaseAgent):
 
         response_text = response.content.strip()
         if response_text == "ALL_CONSISTENT":
+            print("[CodeAgent]   → 所有文件一致，无需修正")
             return files
 
         fixes = self._parse_tagged_files(response_text)
+        if fixes:
+            print(f"[CodeAgent]   → 修正了 {len(fixes)} 个文件: {', '.join(fixes.keys())}")
         if fixes:
             # Only update files that already exist; don't let the review add new ones
             existing_fixes = {p: c for p, c in fixes.items() if p in files}

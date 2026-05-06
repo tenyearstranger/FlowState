@@ -340,6 +340,11 @@ def to_frontend_pipeline(pipeline: Pipeline) -> FrontendPipeline:
     stages = []
     for index, stage in enumerate(pipeline.stages):
         name, name_en = stage_type_label(stage.stage_type)
+        deps_manifest = (
+            stage.agent_output.get("deps_manifest")
+            if stage.agent_output and stage.sub_phase == "deps_confirm"
+            else None
+        )
         stages.append(
             FrontendPipelineStage(
                 id=f"{pipeline.id}-stage-{index + 1}",
@@ -353,6 +358,8 @@ def to_frontend_pipeline(pipeline: Pipeline) -> FrontendPipeline:
                 isCheckpoint=stage.stage_type in CHECKPOINT_STAGE_TYPES,
                 startedAt=serialize_datetime(stage.started_at),
                 completedAt=serialize_datetime(stage.completed_at),
+                subPhase=stage.sub_phase,
+                depsManifest=deps_manifest,
             )
         )
 
@@ -394,22 +401,51 @@ def to_frontend_checkpoint(pipeline: Pipeline, stage: StageType, index: int) -> 
         or serialize_datetime(pipeline.created_at)
         or datetime.now(timezone.utc).isoformat()
     )
+    out = stage_node.agent_output or {}
+    deps_manifest = (
+        out.get("deps_manifest")
+        if out and stage_node.sub_phase == "deps_confirm"
+        else None
+    )
+    # Stage 5: extract structured review data
+    review_score: int | None = None
+    review_issues: list | None = None
+    if stage == StageType.REVIEW:
+        raw_score = out.get("score")
+        if isinstance(raw_score, (int, float)):
+            review_score = int(raw_score)
+        review_data = out.get("review", {})
+        issues = out.get("issues") or review_data.get("issues")
+        if isinstance(issues, list):
+            review_issues = issues
+    # Stage 4 Phase 2: extract pass rate
+    pass_rate: str | None = None
+    if stage == StageType.TESTING and stage_node.sub_phase is None:
+        raw_pass = out.get("pass_rate")
+        if isinstance(raw_pass, str) and raw_pass:
+            pass_rate = raw_pass
+
     return FrontendCheckpoint(
         id=build_checkpoint_id(pipeline.id, stage),
         pipelineId=pipeline.id,
         pipelineName=pipeline.title or pipeline.context.requirement_raw[:60],
         stage=stage_name,
         stageIndex=index,
-                status=(
-                    "pending"
-                    if stage_node.status == StageStatus.WAITING_HUMAN
-                    else "approved"
-                    if stage_node.status == StageStatus.APPROVED
-                    else "rejected"
-                ),
+        status=(
+            "pending"
+            if stage_node.status == StageStatus.WAITING_HUMAN
+            else "approved"
+            if stage_node.status == StageStatus.APPROVED
+            else "rejected"
+        ),
         createdAt=created_at,
         output=extract_stage_output(pipeline, stage, stage_node.agent_output) or "",
         rejectReason=stage_node.human_feedback,
+        subPhase=stage_node.sub_phase,
+        depsManifest=deps_manifest,
+        reviewScore=review_score,
+        reviewIssues=review_issues,
+        passRate=pass_rate,
     )
 
 

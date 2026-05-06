@@ -77,6 +77,7 @@ class GitContext(BaseModel):
     pr_title: Optional[str] = None
     pr_description: Optional[str] = None
     pr_command: Optional[str] = None
+    pr_url: Optional[str] = None       # filled after successful gh pr create
 
 
 class PipelineContext(BaseModel):
@@ -110,6 +111,7 @@ class StageNode(BaseModel):
     model_name: Optional[str] = None
     human_feedback: Optional[str] = None
     human_approval: Optional[ApproveAction] = None
+    sub_phase: Optional[str] = None  # e.g. "deps_confirm" for testing stage phase 1
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     retry_count: int = 0

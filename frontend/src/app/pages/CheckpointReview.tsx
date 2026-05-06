@@ -289,6 +289,58 @@ export function CheckpointReview() {
                   {checkpoint.stage} · 检查点
                 </span>
               </div>
+              {/* Stage 5: 评分徽章 */}
+              {checkpoint.reviewScore != null && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span
+                    className="px-1.5 py-0.5 rounded"
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      background:
+                        checkpoint.reviewScore >= 80
+                          ? "rgba(52,199,89,0.15)"
+                          : checkpoint.reviewScore >= 60
+                          ? "rgba(255,159,10,0.15)"
+                          : "rgba(255,69,58,0.15)",
+                      color:
+                        checkpoint.reviewScore >= 80
+                          ? "#34C759"
+                          : checkpoint.reviewScore >= 60
+                          ? "#FF9F0A"
+                          : "#FF453A",
+                    }}
+                  >
+                    {checkpoint.reviewScore}/100
+                  </span>
+                  {checkpoint.reviewIssues && (
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
+                      {checkpoint.reviewIssues.filter(i => i.severity === "critical").length > 0 && (
+                        <span style={{ color: "#FF453A" }}>
+                          🔴{checkpoint.reviewIssues.filter(i => i.severity === "critical").length}
+                        </span>
+                      )}{" "}
+                      {checkpoint.reviewIssues.length} 个问题
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Stage 4 Phase 2: 测试通过率 */}
+              {checkpoint.passRate && (
+                <div className="mt-1.5">
+                  <span
+                    className="px-1.5 py-0.5 rounded"
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      background: "rgba(52,199,89,0.15)",
+                      color: "#34C759",
+                    }}
+                  >
+                    ✓ {checkpoint.passRate}
+                  </span>
+                </div>
+              )}
               <div className="flex items-center gap-1 mt-2">
                 <Clock size={9} style={{ color: "rgba(255,255,255,0.25)" }} />
                 <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>
@@ -349,6 +401,121 @@ export function CheckpointReview() {
                   }}
                 >
                   {actionError}
+                </div>
+              )}
+
+              {/* Stage 5: 结构化评审摘要 */}
+              {selectedCp.reviewScore != null && (
+                <div className="mb-4 rounded-2xl overflow-hidden" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
+                  {/* 评分 header */}
+                  <div
+                    className="flex items-center gap-4 px-5 py-4"
+                    style={{ background: "rgba(255,255,255,0.02)", borderBottom: "1px solid rgba(255,255,255,0.05)" }}
+                  >
+                    <div
+                      className="w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0"
+                      style={{
+                        background:
+                          selectedCp.reviewScore >= 80
+                            ? "rgba(52,199,89,0.12)"
+                            : selectedCp.reviewScore >= 60
+                            ? "rgba(255,159,10,0.12)"
+                            : "rgba(255,69,58,0.12)",
+                        border: `1px solid ${
+                          selectedCp.reviewScore >= 80
+                            ? "rgba(52,199,89,0.25)"
+                            : selectedCp.reviewScore >= 60
+                            ? "rgba(255,159,10,0.25)"
+                            : "rgba(255,69,58,0.25)"
+                        }`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 18,
+                          fontWeight: 700,
+                          color:
+                            selectedCp.reviewScore >= 80
+                              ? "#34C759"
+                              : selectedCp.reviewScore >= 60
+                              ? "#FF9F0A"
+                              : "#FF453A",
+                        }}
+                      >
+                        {selectedCp.reviewScore}
+                      </span>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>代码质量评分</div>
+                      <div className="flex items-center gap-2">
+                        {(["critical", "high", "medium", "low"] as const).map((sev) => {
+                          const count = (selectedCp.reviewIssues ?? []).filter(i => i.severity === sev).length;
+                          if (!count) return null;
+                          const colors: Record<string, string> = {
+                            critical: "#FF453A", high: "#FF9F0A", medium: "#FFD60A", low: "#636366",
+                          };
+                          const icons: Record<string, string> = {
+                            critical: "🔴", high: "🟠", medium: "🟡", low: "🔵",
+                          };
+                          return (
+                            <span
+                              key={sev}
+                              style={{ fontSize: 11, color: colors[sev] }}
+                            >
+                              {icons[sev]} {count} {sev}
+                            </span>
+                          );
+                        })}
+                        {!(selectedCp.reviewIssues?.length) && (
+                          <span style={{ fontSize: 11, color: "#34C759" }}>✓ 无问题</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* 问题列表 */}
+                  {selectedCp.reviewIssues && selectedCp.reviewIssues.length > 0 && (
+                    <div className="px-5 py-3 space-y-2">
+                      {selectedCp.reviewIssues.slice(0, 8).map((issue, idx) => {
+                        const sevColor: Record<string, string> = {
+                          critical: "#FF453A", high: "#FF9F0A", medium: "#FFD60A", low: "#636366",
+                        };
+                        return (
+                          <div key={idx} className="flex items-start gap-2">
+                            <span style={{ fontSize: 10, color: sevColor[issue.severity] ?? "#fff", marginTop: 1 }}>
+                              {{critical:"🔴",high:"🟠",medium:"🟡",low:"🔵"}[issue.severity]}
+                            </span>
+                            <div>
+                              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", fontFamily: "monospace" }}>
+                                {issue.file}:{issue.line}
+                              </span>
+                              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", marginLeft: 6 }}>
+                                {issue.message}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {selectedCp.reviewIssues.length > 8 && (
+                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>
+                          + {selectedCp.reviewIssues.length - 8} 个问题（见下方完整报告）
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Stage 4 Phase 2: 测试结果摘要 */}
+              {selectedCp.passRate && (
+                <div
+                  className="mb-4 rounded-xl px-4 py-3 flex items-center gap-3"
+                  style={{ background: "rgba(52,199,89,0.06)", border: "1px solid rgba(52,199,89,0.18)" }}
+                >
+                  <span style={{ fontSize: 18 }}>✅</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: "#34C759" }}>测试全部通过</div>
+                    <div style={{ fontSize: 11, color: "rgba(52,199,89,0.65)" }}>{selectedCp.passRate} 用例通过</div>
+                  </div>
                 </div>
               )}
 
@@ -533,6 +700,93 @@ export function CheckpointReview() {
                         </motion.button>
                       </div>
                     </motion.div>
+                  ) : selectedCp.subPhase === "deps_confirm" ? (
+                    // ── Testing Phase 1: 依赖确认按钮 ──
+                    <div>
+                      {selectedCp.depsManifest && (
+                        <div
+                          className="rounded-xl p-3 mb-3"
+                          style={{ background: "rgba(0,0,0,0.2)", fontSize: 11 }}
+                        >
+                          <div style={{ color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>需要安装的测试依赖：</div>
+                          {(selectedCp.depsManifest.pip_packages ?? []).length > 0 && (
+                            <div className="mb-1">
+                              <span style={{ color: "rgba(255,255,255,0.4)" }}>pip: </span>
+                              <span style={{ color: "rgba(255,255,255,0.75)" }}>
+                                {selectedCp.depsManifest.pip_packages!.join("  ")}
+                              </span>
+                            </div>
+                          )}
+                          {(selectedCp.depsManifest.npm_packages ?? []).length > 0 && (
+                            <div>
+                              <span style={{ color: "rgba(255,255,255,0.4)" }}>npm: </span>
+                              <span style={{ color: "rgba(255,255,255,0.75)" }}>
+                                {selectedCp.depsManifest.npm_packages!.join("  ")}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-3">
+                        <motion.button
+                          whileHover={{ scale: 1.02, y: -1 }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => setShowRejectInput(true)}
+                          disabled={submitting}
+                          className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl flex-1"
+                          style={{
+                            background: "rgba(255,69,58,0.06)",
+                            border: "1px solid rgba(255,69,58,0.2)",
+                            color: "#FF453A",
+                            fontSize: 13,
+                            fontWeight: 500,
+                            cursor: submitting ? "not-allowed" : "pointer",
+                            opacity: submitting ? 0.6 : 1,
+                          }}
+                        >
+                          <X size={14} />
+                          Reject
+                          <span style={{ fontSize: 10, opacity: 0.6 }}>（回退重做）</span>
+                        </motion.button>
+                        <motion.button
+                          whileHover={{ scale: 1.02, y: -1 }}
+                          whileTap={{ scale: 0.97 }}
+                          disabled={submitting}
+                          onClick={async () => {
+                            setSubmitting(true);
+                            setActionError(null);
+                            try {
+                              const updated = await checkpointsApi.confirmDeps(selectedCp.id);
+                              updateCheckpointList(updated);
+                              checkpointsQuery.reload();
+                              setActionDone("approved");
+                              toast.success("已确认", { description: "正在安装依赖并运行测试..." });
+                              setTimeout(() => setActionDone(null), 3000);
+                            } catch (error) {
+                              const msg = getErrorMessage(error);
+                              setActionError(msg);
+                              toast.error("操作失败", { description: msg });
+                            } finally {
+                              setSubmitting(false);
+                            }
+                          }}
+                          className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl flex-1"
+                          style={{
+                            background: "rgba(48,209,88,0.1)",
+                            border: "1px solid rgba(48,209,88,0.25)",
+                            color: "#30D158",
+                            fontSize: 13,
+                            fontWeight: 500,
+                            cursor: submitting ? "not-allowed" : "pointer",
+                            boxShadow: "0 4px 16px rgba(48,209,88,0.1)",
+                            opacity: submitting ? 0.6 : 1,
+                          }}
+                        >
+                          <Check size={14} />
+                          {submitting ? "处理中..." : "确认安装并运行测试"}
+                        </motion.button>
+                      </div>
+                    </div>
                   ) : (
                     <div className="flex items-center gap-3">
                       <motion.button

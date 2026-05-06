@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -10,8 +11,11 @@ from src.api.schemas import FrontendCheckpoint, FrontendActivityItem
 from src.api.service import PipelineService
 from src.api.routers.ui_shared import (
     ACTIVITIES,
+    build_checkpoint_id,
     find_persisted_checkpoint,
     list_persisted_checkpoints,
+    serialize_datetime,
+    stage_type_label,
     to_frontend_checkpoint,
 )
 
@@ -64,6 +68,58 @@ async def approve_checkpoint(
             time="刚刚",
             text=f"{updated_pipeline.id} · {updated_checkpoint.stage} 检查点审批已通过",
             type="success",
+        ),
+    )
+    del ACTIVITIES[20:]
+    return updated_checkpoint
+
+
+@router.post("/checkpoints/{checkpoint_id}/confirm-deps", response_model=FrontendCheckpoint)
+async def confirm_deps_checkpoint(
+    checkpoint_id: str,
+    service: PipelineService = Depends(get_pipeline_service),
+) -> FrontendCheckpoint:
+    """Testing stage Phase 1: confirm dep installation and trigger Phase 2 (install + run tests)."""
+    persisted = await find_persisted_checkpoint(checkpoint_id, service)
+    if persisted is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found")
+
+    pipeline, stage_index, _ = persisted
+    stage_node = pipeline.stages[stage_index]
+    if stage_node.status.value != "waiting_human":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Checkpoint already processed")
+    if stage_node.sub_phase != "deps_confirm":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Not a deps_confirm checkpoint")
+
+    # Transition to Phase 2 (does NOT advance to next stage like approve_stage would)
+    updated_pipeline = await service.confirm_testing_deps(pipeline.id, stage_index)
+
+    # Kick off phase 2 asynchronously (install deps + run tests)
+    asyncio.create_task(service._run_testing_phase2(updated_pipeline))
+
+    # After confirm_testing_deps(), the stage is RUNNING (phase 2 in progress).
+    # to_frontend_checkpoint() returns None for RUNNING stages, so we build manually.
+    stage_type = updated_pipeline.stages[stage_index].stage_type
+    stage_name, _ = stage_type_label(stage_type)
+    updated_checkpoint = FrontendCheckpoint(
+        id=build_checkpoint_id(updated_pipeline.id, stage_type),
+        pipelineId=updated_pipeline.id,
+        pipelineName=updated_pipeline.title or updated_pipeline.context.requirement_raw[:60],
+        stage=stage_name,
+        stageIndex=stage_index,
+        status="approved",  # Phase 1 deps confirmed — treat as approved for UI purposes
+        createdAt=serialize_datetime(datetime.now(timezone.utc)) or datetime.now(timezone.utc).isoformat(),
+        output="",
+        subPhase=None,  # Cleared by confirm_testing_deps
+        depsManifest=None,
+    )
+
+    ACTIVITIES.insert(
+        0,
+        FrontendActivityItem(
+            time="刚刚",
+            text=f"{updated_pipeline.id} · 测试依赖已确认，正在安装并运行测试",
+            type="info",
         ),
     )
     del ACTIVITIES[20:]

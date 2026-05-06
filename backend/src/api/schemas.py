@@ -46,6 +46,8 @@ class FrontendPipelineStage(BaseModel):
     isCheckpoint: bool | None = None
     startedAt: str | None = None
     completedAt: str | None = None
+    subPhase: str | None = None
+    depsManifest: dict | None = None
 
 
 class FrontendPipeline(BaseModel):
@@ -94,6 +96,11 @@ class FrontendCheckpoint(BaseModel):
     createdAt: str
     output: str
     rejectReason: str | None = None
+    subPhase: str | None = None          # e.g. "deps_confirm" for testing stage phase 1
+    depsManifest: dict | None = None     # pip/npm packages to install
+    reviewScore: int | None = None       # stage5: 0-100 review score
+    reviewIssues: list | None = None     # stage5: [{severity, file, line, message}]
+    passRate: str | None = None          # stage4 phase2: "8/8"
 
 
 class FrontendAnalyticsSummary(BaseModel):

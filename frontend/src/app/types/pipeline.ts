@@ -18,6 +18,12 @@ export interface PipelineStage {
   isCheckpoint?: boolean;
   startedAt?: string;
   completedAt?: string;
+  subPhase?: string | null;
+  depsManifest?: {
+    pip_packages?: string[];
+    npm_packages?: string[];
+    install_commands?: Record<string, string>;
+  } | null;
 }
 
 export interface PipelineGitStageCommit {
@@ -48,6 +54,7 @@ export interface PipelineGitContext {
   pr_title?: string | null;
   pr_description?: string | null;
   pr_command?: string | null;
+  pr_url?: string | null;
 }
 
 export interface Pipeline {

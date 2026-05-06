@@ -43,6 +43,8 @@ export const checkpointsApi = {
     apiClient.get<Checkpoint[]>("/checkpoints", { ...options, query: { status: "all" } }),
   reject: (id: string, reason: string, options?: RequestOptions) =>
     apiClient.post<Checkpoint>(`/checkpoints/${id}/reject`, { reason }, options),
+  confirmDeps: (id: string, options?: RequestOptions) =>
+    apiClient.post<Checkpoint>(`/checkpoints/${id}/confirm-deps`, undefined, options),
 };
 
 export const analyticsApi = {

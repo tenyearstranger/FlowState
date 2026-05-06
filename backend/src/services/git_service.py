@@ -194,6 +194,67 @@ class GitService:
     def clean_untracked(self, worktree: Path) -> None:
         self._run(["clean", "-fd"], cwd=worktree, timeout_seconds=max(self.timeout_seconds, 60))
 
+    def has_remote(self, repo: Path, remote: str = "origin") -> bool:
+        """Check whether a named remote exists."""
+        try:
+            output = self._run(["remote"], cwd=repo)
+            return remote in output.splitlines()
+        except GitError:
+            return False
+
+    def push_branch(self, repo: Path, branch: str, remote: str = "origin") -> None:
+        """Push branch to remote. Raises GitError on failure."""
+        self._run(
+            ["push", "--set-upstream", remote, branch],
+            cwd=repo,
+            timeout_seconds=60,
+        )
+
+    def create_gh_pr(
+        self,
+        repo: Path,
+        *,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+    ) -> str:
+        """Run `gh pr create` and return the PR URL. Raises GitError if gh unavailable or fails."""
+        import subprocess as _sp
+        import shutil
+
+        if not shutil.which("gh"):
+            raise GitError("gh CLI 未安装，无法自动创建 PR")
+
+        cmd = [
+            "gh", "pr", "create",
+            "--title", title,
+            "--body", body,
+            "--head", head,
+            "--base", base,
+        ]
+        try:
+            result = _sp.run(
+                cmd,
+                cwd=str(repo),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+            )
+        except _sp.TimeoutExpired as exc:
+            raise GitError("gh pr create 超时") from exc
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise GitError(f"gh pr create 失败: {stderr or result.stdout}")
+
+        # gh outputs the PR URL as the last line
+        url = (result.stdout or "").strip().splitlines()[-1].strip()
+        if not url.startswith("http"):
+            raise GitError(f"gh pr create 输出异常: {result.stdout[:200]}")
+        return url
+
     def ensure_gitignore_entry(self, repo: Path, entry: str) -> None:
         gitignore_path = repo / ".gitignore"
         normalized = entry.strip()

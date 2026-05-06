@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from src.llm_client import LLMResponse
 from src.agents.requirement_agent import RequirementAgent
 from src.api.app import create_app
 from src.bootstrap import create_engine
+from src.config import LLMProvider, get_config
 from src.models.pipeline import PipelineStatus, StageStatus, StageType
 from src.services.git_service import GitError
 from src.store.state_store import StateStore
@@ -222,13 +224,18 @@ class FakeTestAgent:
                         "    assert response.status_code in {200, 404}\n"
                     )
                 },
-                "test_results": {"total": 1, "passed": 1, "failed": 0, "coverage": 85},
-                "report": "## 测试报告\n\n- 总计: 1 项测试\n- 通过: 1 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 85%",
-                "pass_rate": "1/1",
+                "deps_manifest": {
+                    "pip_packages": ["pytest", "httpx"],
+                    "npm_packages": [],
+                    "install_commands": {"python": "pip install pytest httpx"},
+                },
+                "test_results": {"total": 0, "passed": 0, "failed": 0, "coverage": 0},
+                "report": "## 测试报告\n\n- 总计: 0 项测试\n- 通过: 0 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 0%",
+                "pass_rate": "待执行",
             },
-            summary="测试完成：1/1 通过",
-            details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 1 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 85%",
-            needs_human_review=False,
+            summary="测试文件生成完成，共 1 个文件，请确认安装依赖后执行测试",
+            details="## 测试依赖清单\n\n### Python 依赖\n- `pytest`\n- `httpx`",
+            needs_human_review=True,
             token_usage={"prompt_tokens": 90, "completion_tokens": 110, "total_tokens": 200},
             model="fake-test-model",
         )
@@ -239,7 +246,7 @@ class FakeFailingTestAgent:
         generated_code = input_data.context.get("generated_code", {})
         assert "app/main.py" in generated_code
         return AgentOutput(
-            success=False,
+            success=True,
             result={
                 "test_files": {
                     "tests/test_app.py": (
@@ -247,18 +254,17 @@ class FakeFailingTestAgent:
                         "    assert False, 'health endpoint missing'\n"
                     )
                 },
-                "test_results": {
-                    "total": 1,
-                    "passed": 0,
-                    "failed": 1,
-                    "coverage": 40,
-                    "errors": ["health endpoint missing"],
+                "deps_manifest": {
+                    "pip_packages": ["pytest"],
+                    "npm_packages": [],
+                    "install_commands": {"python": "pip install pytest"},
                 },
-                "report": "## 测试报告\n\n- 总计: 1 项测试\n- 通过: 0 ✅\n- 失败: 1 ❌\n- 代码覆盖率: 40%\n\n### 错误详情\n- health endpoint missing",
-                "pass_rate": "0/1",
+                "test_results": {"total": 0, "passed": 0, "failed": 0, "coverage": 0},
+                "report": "## 测试报告\n\n- 总计: 0 项测试\n- 通过: 0 ✅\n- 失败: 0 ❌\n- 代码覆盖率: 0%",
+                "pass_rate": "待执行",
             },
-            summary="测试完成：0/1 通过",
-            details="## 测试报告\n\n- 总计: 1 项测试\n- 通过: 0 ✅\n- 失败: 1 ❌\n- 代码覆盖率: 40%",
+            summary="测试文件生成完成，共 1 个文件，请确认安装依赖后执行测试",
+            details="## 测试依赖清单\n\n### Python 依赖\n- `pytest`",
             needs_human_review=True,
             token_usage={"prompt_tokens": 80, "completion_tokens": 100, "total_tokens": 180},
             model="fake-test-model",
@@ -332,6 +338,20 @@ def _load_backend_pipeline(client: TestClient, pipeline_id: str) -> dict:
     response = client.get(f"/api/v1/pipelines/{pipeline_id}")
     assert response.status_code == 200
     return response.json()
+
+
+def _confirm_testing_deps(client: TestClient, pipeline_id: str) -> None:
+    """Confirm testing deps (Phase 1 → Phase 2: install + run tests)."""
+    testing_cp_id = f"cp-{pipeline_id}-testing"
+    resp = client.post(f"/api/checkpoints/{testing_cp_id}/confirm-deps")
+    assert resp.status_code == 200, f"confirm-deps failed: {resp.text}"
+
+
+def _approve_testing(client: TestClient, pipeline_id: str) -> None:
+    """Approve testing results checkpoint (Phase 2 done → advance to review)."""
+    testing_cp_id = f"cp-{pipeline_id}-testing"
+    resp = client.post(f"/api/checkpoints/{testing_cp_id}/approve")
+    assert resp.status_code == 200, f"approve testing failed: {resp.text}"
 
 
 def test_healthcheck(tmp_path):
@@ -662,6 +682,9 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
 
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         approve_solution_response = client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        # Stage 4 (testing) now has two phases: confirm deps → run tests → approve
+        _confirm_testing_deps(client, created_pipeline["id"])
+        _approve_testing(client, created_pipeline["id"])
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
         backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
@@ -722,6 +745,8 @@ def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
 
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        # Confirm deps to trigger Phase 2 (install + run tests), but don't approve results
+        _confirm_testing_deps(client, created_pipeline["id"])
 
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
         backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
@@ -766,6 +791,8 @@ def test_approve_review_checkpoint_moves_delivery_to_waiting_review(tmp_path):
 
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        _confirm_testing_deps(client, created_pipeline["id"])
+        _approve_testing(client, created_pipeline["id"])
 
         review_checkpoint_id = f"cp-{created_pipeline['id']}-code_review"
         approve_review_response = client.post(f"/api/checkpoints/{review_checkpoint_id}/approve")
@@ -811,6 +838,8 @@ def test_approve_delivery_checkpoint_completes_pipeline(tmp_path):
 
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        _confirm_testing_deps(client, created_pipeline["id"])
+        _approve_testing(client, created_pipeline["id"])
 
         review_checkpoint_id = f"cp-{created_pipeline['id']}-code_review"
         client.post(f"/api/checkpoints/{review_checkpoint_id}/approve")
@@ -917,6 +946,8 @@ def test_stage_commit_files_are_incremental(tmp_path):
         client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        # Confirm testing deps to trigger Phase 2 which writes files and makes the git commit
+        _confirm_testing_deps(client, created_pipeline["id"])
         backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
 
     stage_commits = backend_pipeline["context"]["git"]["stage_commits"]
@@ -945,6 +976,9 @@ def test_dynamic_token_analytics_and_agents(tmp_path):
 
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        # Advance through testing (Phase 1 → Phase 2 → approve) so review runs
+        _confirm_testing_deps(client, created_pipeline["id"])
+        _approve_testing(client, created_pipeline["id"])
 
         analytics_response = client.get("/api/analytics")
         agents_response = client.get("/api/agents")
@@ -952,6 +986,7 @@ def test_dynamic_token_analytics_and_agents(tmp_path):
     assert analytics_response.status_code == 200
     analytics = analytics_response.json()
     assert analytics["summary"]["totalRuns"] == 1
+    # req(400) + solution(600) + coding(1000) + testing(200) + review(200) = 2400
     assert analytics["summary"]["totalTokens"] == 2400
     assert any(item["tokens"] > 0 for item in analytics["tokenUsage"])
     assert any(item["stage"] == "代码生成" and item["avg"] >= 0 for item in analytics["stageDurations"])
@@ -1099,6 +1134,76 @@ def test_validate_llm_settings_connectivity_success(tmp_path):
     assert payload["ok"] is True
     assert payload["provider"] == "kimi"
     assert payload["model"] == "kimi-k2.6"
+
+
+def test_get_config_prefers_env_over_json_for_llm_switching(tmp_path):
+    env_file = tmp_path / ".env"
+    config_file = tmp_path / "flowstate.config.json"
+
+    env_file.write_text(
+        "\n".join(
+            [
+                "FS_LLM_PROVIDER=kimi",
+                "FS_LLM_MODEL=kimi-k2.6",
+                "FS_LLM_BASE_URL=https://api.moonshot.cn/v1",
+                "FS_LLM_API_KEY=sk-test-kimi-1234",
+                "FS_AGENT_DELIVERY_PROVIDER=kimi",
+                "FS_AGENT_DELIVERY_MODEL=kimi-k2.6",
+                "FS_AGENT_DELIVERY_BASE_URL=https://api.moonshot.cn/v1",
+                "FS_AGENT_DELIVERY_API_KEY=sk-test-kimi-delivery",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config_file.write_text(
+        json.dumps(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "model": "deepseek-chat",
+                    "base_url": "https://api.deepseek.com",
+                },
+                "stages": {
+                    "delivery": {
+                        "provider_override": "deepseek",
+                        "model_override": "deepseek-chat",
+                        "base_url_override": "https://api.deepseek.com",
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    previous_env_path = os.environ.get("FS_ENV_FILE_PATH")
+    previous_config_path = os.environ.get("FS_CONFIG_PATH")
+
+    os.environ["FS_ENV_FILE_PATH"] = str(env_file)
+    os.environ["FS_CONFIG_PATH"] = str(config_file)
+
+    try:
+        cfg = get_config(reload=True)
+    finally:
+        if previous_env_path is None:
+            os.environ.pop("FS_ENV_FILE_PATH", None)
+        else:
+            os.environ["FS_ENV_FILE_PATH"] = previous_env_path
+        if previous_config_path is None:
+            os.environ.pop("FS_CONFIG_PATH", None)
+        else:
+            os.environ["FS_CONFIG_PATH"] = previous_config_path
+        get_config(reload=True)
+
+    assert cfg.llm.provider == LLMProvider.KIMI
+    assert cfg.llm.model == "kimi-k2.6"
+    assert cfg.llm.base_url == "https://api.moonshot.cn/v1"
+    assert cfg.stages["delivery"].provider_override == "kimi"
+    assert cfg.stages["delivery"].model_override == "kimi-k2.6"
+    assert cfg.stages["delivery"].base_url_override == "https://api.moonshot.cn/v1"
 
 
 def test_pipeline_pause_resume_and_cancel_actions(tmp_path):

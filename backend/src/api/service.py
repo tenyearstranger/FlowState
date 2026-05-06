@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shlex
@@ -640,16 +641,21 @@ class PipelineService:
         if pipeline.status != PipelineStatus.PAUSED:
             raise PipelineValidationError("只有已暂停的流水线才能继续")
 
-        next_stage = next(
-            (stage for stage in pipeline.stages if stage.status == StageStatus.PENDING),
+        next_stage_index = next(
+            (i for i, stage in enumerate(pipeline.stages) if stage.status == StageStatus.PENDING),
             None,
         )
-        if next_stage is not None:
-            next_stage.status = StageStatus.RUNNING
+        if next_stage_index is not None:
+            pipeline.stages[next_stage_index].status = StageStatus.RUNNING
         pipeline.status = PipelineStatus.RUNNING
         pipeline.updated_at = datetime.now()
         pipeline.logs.append(f"[{_timestamp()}] 继续执行流水线")
         await self.state_store.save(pipeline)
+
+        # Actually dispatch the stage — without this the pipeline stays "running" forever
+        if next_stage_index is not None:
+            asyncio.create_task(self._run_stage_by_index(pipeline, next_stage_index))
+
         return pipeline
 
     async def cancel_pipeline(self, pipeline_id: str) -> Pipeline:
@@ -703,7 +709,7 @@ class PipelineService:
             f"[{_timestamp()}] 人工触发重试，从阶段 {pipeline.stages[failed_index].stage_type.value} 重新开始"
         )
         await self.state_store.save(pipeline)
-        await self._run_stage_by_index(pipeline, failed_index)
+        asyncio.create_task(self._run_stage_by_index(pipeline, failed_index))
         return pipeline
 
     async def run_pipeline_by_id(self, pipeline_id: str) -> Pipeline:
@@ -733,6 +739,27 @@ class PipelineService:
             return pipeline
 
         await self._run_stage_by_index(pipeline, next_stage_index)
+        return pipeline
+
+    async def confirm_testing_deps(self, pipeline_id: str, stage_index: int) -> Pipeline:
+        """Phase 1 → Phase 2 transition: confirm deps without advancing to next stage."""
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        stage = pipeline.stages[stage_index]
+        if stage.status != StageStatus.WAITING_HUMAN:
+            raise ValueError("当前阶段不处于待审批状态")
+        if stage.sub_phase != "deps_confirm":
+            raise ValueError("当前阶段不是依赖确认阶段")
+
+        now = datetime.now()
+        stage.status = StageStatus.RUNNING   # Phase 2 starting — do NOT advance to next stage
+        stage.sub_phase = None
+        stage.human_approval = ApproveAction.APPROVE
+        pipeline.updated_at = now
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.logs.append(f"[{_timestamp()}] 依赖安装已确认，正在启动测试执行...")
+        await self.state_store.save(pipeline)
         return pipeline
 
     async def approve_stage(self, pipeline_id: str, stage_index: int) -> Pipeline:
@@ -1081,6 +1108,7 @@ class PipelineService:
             raise
 
     async def _run_testing(self, pipeline: Pipeline) -> None:
+        """Phase 1: 生成测试文件与依赖清单，等待用户确认安装。"""
         if len(pipeline.stages) < 4:
             return
 
@@ -1088,15 +1116,16 @@ class PipelineService:
         now = datetime.now()
         testing_stage.status = StageStatus.RUNNING
         testing_stage.started_at = now
+        testing_stage.sub_phase = None
         testing_stage.agent_output = {
             "text": (
-                "## 正在生成与整理测试结果\n\n"
-                "代码生成已完成，正在根据变更文件生成测试并汇总测试报告。"
+                "## 正在生成测试文件\n\n"
+                "代码生成已完成，正在分析代码并生成测试文件与依赖清单。"
             )
         }
         pipeline.status = PipelineStatus.RUNNING
         pipeline.updated_at = now
-        pipeline.logs.append(f"[{_timestamp()}] TestAgent 正在生成测试报告...")
+        pipeline.logs.append(f"[{_timestamp()}] TestAgent 正在生成测试文件与依赖清单...")
 
         try:
             if self.engine is not None and StageType.TESTING in getattr(self.engine, "agents", {}):
@@ -1112,60 +1141,113 @@ class PipelineService:
             output = await agent.execute(input_data)
             now = datetime.now()
             testing_stage.agent_output = output.result
+            testing_stage.sub_phase = "deps_confirm"
             _apply_agent_metrics(testing_stage, output)
-            testing_stage.status = (
-                StageStatus.WAITING_HUMAN
-                if output.needs_human_review or not output.success
-                else StageStatus.COMPLETED
-            )
+            testing_stage.status = StageStatus.WAITING_HUMAN
             testing_stage.completed_at = now
 
-            test_report = output.result.get("report") or output.details
-            if isinstance(test_report, str) and test_report.strip():
-                pipeline.context.test_report = test_report
-                report_path = _write_project_doc(
-                    pipeline,
-                    "test_report.md",
-                    test_report,
-                )
-                pipeline.logs.append(f"[{_timestamp()}] 测试报告已写入: {report_path}")
-
-            test_files = output.result.get("test_files")
-            if isinstance(test_files, dict):
-                written_tests = _write_generated_code(
-                    [str(path) for path in _project_write_targets(pipeline)],
-                    test_files,
-                )
-            else:
-                written_tests = []
-
             pipeline.updated_at = now
-            pipeline.status = (
-                PipelineStatus.WAITING_HUMAN
-                if output.needs_human_review or not output.success
-                else PipelineStatus.PENDING
-            )
+            pipeline.status = PipelineStatus.WAITING_HUMAN
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
             _append_usage_log(pipeline, testing_stage)
-            if written_tests:
-                preview = "、".join(Path(path).name for path in written_tests[:5])
-                pipeline.logs.append(f"[{_timestamp()}] 生成测试文件已写入: {preview}")
-            self._commit_stage(
-                pipeline,
-                StageType.TESTING,
-                self._default_commit_message(pipeline, StageType.TESTING),
-            )
-            if output.needs_human_review:
-                pipeline.logs.append(f"[{_timestamp()}] 测试阶段进入人工确认，等待审批")
+
+            deps = output.result.get("deps_manifest", {})
+            pip_pkgs = deps.get("pip_packages", [])
+            npm_pkgs = deps.get("npm_packages", [])
+            if pip_pkgs or npm_pkgs:
+                pkgs = ", ".join(pip_pkgs + npm_pkgs)
+                pipeline.logs.append(f"[{_timestamp()}] 需要安装依赖: {pkgs}")
+            pipeline.logs.append(f"[{_timestamp()}] 请确认安装依赖后执行测试")
             await self.state_store.save(pipeline)
-            if testing_stage.status == StageStatus.COMPLETED:
-                await self._run_review(pipeline)
         except Exception as error:
             testing_stage.status = StageStatus.FAILED
             testing_stage.completed_at = datetime.now()
             pipeline.status = PipelineStatus.FAILED
             pipeline.error = f"[testing] {error}"
             pipeline.logs.append(f"[{_timestamp()}] 测试阶段失败: {error}")
+            await self.state_store.save(pipeline)
+            raise
+
+    async def _run_testing_phase2(self, pipeline: Pipeline) -> None:
+        """Phase 2: 安装依赖 + 执行测试，更新测试报告。"""
+        if len(pipeline.stages) < 4:
+            return
+
+        testing_stage = pipeline.stages[3]
+        now = datetime.now()
+        testing_stage.status = StageStatus.RUNNING
+        testing_stage.sub_phase = None
+        pipeline.status = PipelineStatus.RUNNING
+        pipeline.updated_at = now
+        pipeline.logs.append(f"[{_timestamp()}] 开始安装依赖并执行测试...")
+        await self.state_store.save(pipeline)
+
+        try:
+            agent = TestAgent()
+            project_path = _execution_project_path(pipeline)
+            agent_output = testing_stage.agent_output or {}
+            test_files: dict[str, str] = agent_output.get("test_files", {})
+            deps_manifest: dict = agent_output.get("deps_manifest", {})
+
+            # 安装依赖
+            install_result = agent.install_deps(project_path, deps_manifest)
+            if install_result.get("errors"):
+                for err in install_result["errors"]:
+                    pipeline.logs.append(f"[{_timestamp()}] ⚠️ 安装警告: {err}")
+            else:
+                pipeline.logs.append(f"[{_timestamp()}] 依赖安装完成")
+
+            # 执行测试
+            test_results = agent.run_tests(project_path, test_files)
+            passed = test_results.get("passed", 0)
+            total = test_results.get("total", 0)
+            ran = test_results.get("ran", False)
+            pipeline.logs.append(
+                f"[{_timestamp()}] 测试执行{'完成' if ran else '失败（环境问题）'}：{passed}/{total} 通过"
+            )
+
+            # 更新 stage
+            report = agent.format_test_report(test_results, install_result)
+            testing_stage.agent_output = {
+                **agent_output,
+                "test_results": test_results,
+                "install_result": install_result,
+                "report": report,
+                "pass_rate": f"{passed}/{total}",
+            }
+            pipeline.context.test_report = report
+            report_path = _write_project_doc(pipeline, "test_report.md", report)
+            pipeline.logs.append(f"[{_timestamp()}] 测试报告已写入: {report_path}")
+
+            # 写测试文件到项目目录
+            written_tests = _write_generated_code(
+                [str(path) for path in _project_write_targets(pipeline)],
+                test_files,
+            )
+            if written_tests:
+                preview = "、".join(Path(path).name for path in written_tests[:5])
+                pipeline.logs.append(f"[{_timestamp()}] 测试文件已写入: {preview}")
+
+            now = datetime.now()
+            all_pass = passed == total and total > 0 and ran
+            testing_stage.status = StageStatus.WAITING_HUMAN  # 测试结果仍需人工确认
+            testing_stage.completed_at = now
+            pipeline.updated_at = now
+            pipeline.status = PipelineStatus.WAITING_HUMAN
+
+            self._commit_stage(
+                pipeline,
+                StageType.TESTING,
+                self._default_commit_message(pipeline, StageType.TESTING),
+            )
+            pipeline.logs.append(f"[{_timestamp()}] 测试阶段进入人工确认，请审查测试结果")
+            await self.state_store.save(pipeline)
+        except Exception as error:
+            testing_stage.status = StageStatus.FAILED
+            testing_stage.completed_at = datetime.now()
+            pipeline.status = PipelineStatus.FAILED
+            pipeline.error = f"[testing_phase2] {error}"
+            pipeline.logs.append(f"[{_timestamp()}] 测试执行阶段失败: {error}")
             await self.state_store.save(pipeline)
             raise
 
@@ -1321,6 +1403,37 @@ class PipelineService:
                     f"--head {shlex.quote(git_ctx.working_branch)} "
                     f"--base {shlex.quote(git_ctx.base_branch)}"
                 )
+                # Try auto push + PR creation if remote exists
+                if git_ctx.repo_root:
+                    repo = Path(git_ctx.repo_root)
+                    try:
+                        if self.git_service.has_remote(repo):
+                            self.git_service.push_branch(repo, git_ctx.working_branch)
+                            pipeline.logs.append(
+                                f"[{_timestamp()}] 已推送分支 {git_ctx.working_branch} 到 origin"
+                            )
+                            try:
+                                pr_url = self.git_service.create_gh_pr(
+                                    repo,
+                                    title=pr_title,
+                                    body=pr_description or "",
+                                    head=git_ctx.working_branch,
+                                    base=git_ctx.base_branch,
+                                )
+                                git_ctx.pr_url = pr_url
+                                pipeline.logs.append(f"[{_timestamp()}] PR 已自动创建: {pr_url}")
+                            except GitError as pr_err:
+                                pipeline.logs.append(
+                                    f"[{_timestamp()}] 自动创建 PR 失败，请手动运行 PR 命令: {pr_err}"
+                                )
+                        else:
+                            pipeline.logs.append(
+                                f"[{_timestamp()}] 未配置远程仓库（origin），请手动推送分支后创建 PR"
+                            )
+                    except GitError as push_err:
+                        pipeline.logs.append(
+                            f"[{_timestamp()}] 推送分支失败，请手动推送后创建 PR: {push_err}"
+                        )
 
             pipeline.updated_at = now
             pipeline.status = (

@@ -54,7 +54,9 @@
     },
     "delivery": {
       "needs_human_review": true,
-      "model_override": null
+      "model_override": "kimi-k2.6",
+      "provider_override": "kimi",
+      "base_url_override": "https://api.moonshot.cn/v1"
     }
   }
 }

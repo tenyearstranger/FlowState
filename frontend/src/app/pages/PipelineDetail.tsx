@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { useApiQuery } from "../hooks/useApiQuery";
-import { gitApi, pipelinesApi } from "../lib/api/services";
+import { checkpointsApi, gitApi, pipelinesApi } from "../lib/api/services";
 import { getErrorMessage } from "../lib/api/client";
 import type { PipelineGitContext, PipelineStage } from "../types/pipeline";
 
@@ -511,7 +511,7 @@ export function PipelineDetail() {
   const [showProjectContext, setShowProjectContext] = useState(false);
   const [showGitContext, setShowGitContext] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<"pause" | "resume" | "cancel" | "retry" | null>(null);
+  const [actionLoading, setActionLoading] = useState<"pause" | "resume" | "cancel" | "retry" | "confirm-deps" | null>(null);
   const [pathActionMessage, setPathActionMessage] = useState<string | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -1230,7 +1230,7 @@ export function PipelineDetail() {
                     </div>
                   </div>
 
-                  {(git.repo_root || git.pr_command) && (
+                  {(git.repo_root || git.pr_command || git.pr_url) && (
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
                       <div className="space-y-4">
                         {git.repo_root && (
@@ -1270,6 +1270,36 @@ export function PipelineDetail() {
                             </div>
                           </div>
                         )}
+
+                        {git.pr_url && (
+                          <div>
+                            <div
+                              className="flex items-center gap-2 mb-2"
+                              style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
+                            >
+                              <ExternalLink size={11} />
+                              Pull Request
+                            </div>
+                            <a
+                              href={git.pr_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 rounded-xl px-4 py-3 hover:bg-white/[0.04] transition-colors"
+                              style={{
+                                background: "rgba(0,209,88,0.06)",
+                                border: "1px solid rgba(0,209,88,0.2)",
+                                color: "#34C759",
+                                fontSize: 12,
+                                fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                                wordBreak: "break-all",
+                                textDecoration: "none",
+                              }}
+                            >
+                              <ExternalLink size={12} style={{ flexShrink: 0 }} />
+                              {git.pr_url}
+                            </a>
+                          </div>
+                        )}
                       </div>
 
                       {git.pr_command && (
@@ -1279,14 +1309,14 @@ export function PipelineDetail() {
                             style={{ fontSize: 11, color: "rgba(255,255,255,0.38)", fontWeight: 500 }}
                           >
                             <Terminal size={11} />
-                            PR 命令草案
+                            {git.pr_url ? "PR 命令（已自动创建）" : "PR 命令（手动运行）"}
                           </div>
                           <div
                             className="rounded-xl px-4 py-3"
                             style={{
                               background: "rgba(0,0,0,0.22)",
                               border: "1px solid rgba(255,255,255,0.06)",
-                              color: "rgba(255,255,255,0.72)",
+                              color: git.pr_url ? "rgba(255,255,255,0.38)" : "rgba(255,255,255,0.72)",
                               fontSize: 12,
                               fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
                               lineHeight: 1.7,
@@ -1388,7 +1418,86 @@ export function PipelineDetail() {
                 </div>
               </div>
 
-              {activeStage.status === "awaiting_review" && (
+              {activeStage.status === "awaiting_review" && activeStage.subPhase === "deps_confirm" ? (
+                // ── Testing Phase 1: 依赖确认 Banner ──
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mx-6 mt-5 p-4 rounded-xl"
+                  style={{
+                    background: "rgba(48,209,88,0.06)",
+                    border: "1px solid rgba(48,209,88,0.2)",
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <CheckSquare size={16} style={{ color: "#30D158" }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: "#30D158" }}>
+                          需要安装测试依赖
+                        </div>
+                        <div style={{ fontSize: 11, color: "rgba(48,209,88,0.6)" }}>
+                          确认后将自动安装依赖并执行测试
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      disabled={actionLoading === "confirm-deps"}
+                      onClick={async () => {
+                        if (!id) return;
+                        setActionLoading("confirm-deps");
+                        try {
+                          // checkpoint id format: cp-{pipelineId}-testing
+                          const checkpointId = `cp-${id}-testing`;
+                          await checkpointsApi.confirmDeps(checkpointId);
+                          await syncPipeline();
+                        } catch (e) {
+                          setActionError(e instanceof Error ? e.message : "操作失败");
+                        } finally {
+                          setActionLoading(null);
+                        }
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-lg"
+                      style={{
+                        background: actionLoading === "confirm-deps" ? "rgba(48,209,88,0.08)" : "rgba(48,209,88,0.15)",
+                        border: "1px solid rgba(48,209,88,0.3)",
+                        color: "#30D158",
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: actionLoading === "confirm-deps" ? "not-allowed" : "pointer",
+                        opacity: actionLoading === "confirm-deps" ? 0.6 : 1,
+                      }}
+                    >
+                      {actionLoading === "confirm-deps" ? "安装中..." : "确认安装并运行测试"}
+                    </button>
+                  </div>
+                  {/* 依赖清单 */}
+                  {activeStage.depsManifest && (
+                    <div
+                      className="rounded-lg p-3 mt-1"
+                      style={{ background: "rgba(0,0,0,0.2)", fontSize: 11 }}
+                    >
+                      {(activeStage.depsManifest.pip_packages ?? []).length > 0 && (
+                        <div className="mb-1">
+                          <span style={{ color: "rgba(255,255,255,0.4)" }}>pip: </span>
+                          <span style={{ color: "rgba(255,255,255,0.75)" }}>
+                            {activeStage.depsManifest.pip_packages!.join("  ")}
+                          </span>
+                        </div>
+                      )}
+                      {(activeStage.depsManifest.npm_packages ?? []).length > 0 && (
+                        <div>
+                          <span style={{ color: "rgba(255,255,255,0.4)" }}>npm: </span>
+                          <span style={{ color: "rgba(255,255,255,0.75)" }}>
+                            {activeStage.depsManifest.npm_packages!.join("  ")}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+              ) : activeStage.status === "awaiting_review" ? (
+                // ── 普通 Checkpoint 审批 Banner ──
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1424,7 +1533,7 @@ export function PipelineDetail() {
                     前往审批 <ChevronRight size={12} />
                   </button>
                 </motion.div>
-              )}
+              ) : null}
 
               {activeStage.status === "running" && (
                 <motion.div

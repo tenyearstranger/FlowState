@@ -244,10 +244,9 @@ def _load_backend_env_file() -> None:
             os.environ[key] = value
 
 
-def _load_from_env() -> FlowStateConfig:
-    """从环境变量加载配置覆盖"""
+def _apply_env_overrides(cfg: FlowStateConfig) -> FlowStateConfig:
+    """将环境变量覆盖应用到现有配置对象。"""
     _load_backend_env_file()
-    cfg = FlowStateConfig()
 
     # --- LLM 配置 ---
     provider_str = os.getenv("FS_LLM_PROVIDER", "").lower()
@@ -304,15 +303,22 @@ def _load_from_env() -> FlowStateConfig:
     return cfg
 
 
+def _load_from_env() -> FlowStateConfig:
+    """从默认值加载配置，并应用环境变量覆盖。"""
+    cfg = FlowStateConfig()
+    return _apply_env_overrides(cfg)
+
+
 def _load_from_json(path: str) -> FlowStateConfig:
-    """从 JSON 配置文件加载"""
-    cfg = _load_from_env()  # 先用环境变量做基准
+    """从 JSON 配置文件加载，并让环境变量拥有更高优先级。"""
+    cfg = FlowStateConfig()
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    # 递归覆盖
+    # 先应用 JSON 配置，再让环境变量覆盖 JSON。
     _deep_merge(cfg, data)
+    cfg = _apply_env_overrides(cfg)
     return cfg
 
 
@@ -401,7 +407,7 @@ def get_config(reload: bool = False) -> FlowStateConfig:
         reload: 是否重新加载（忽略缓存）
 
     加载优先级：
-    1. 环境变量（FS_* 前缀）
+    1. 显式环境变量 / backend/.env
     2. JSON 配置文件（如存在）
     3. 默认值
     """
