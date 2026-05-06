@@ -124,7 +124,7 @@ async def main():
         output1 = await run_stage(engine, pipeline, 0)
         print(f"  ✅ {output1.summary}")
         if pipeline.context.requirement_doc:
-            doc_path = Path(PROJECT_PATH) / "main" / "requirements.md"
+            doc_path = Path(PROJECT_PATH) / "docs" / "requirements.md"
             doc_path.parent.mkdir(parents=True, exist_ok=True)
             doc_path.write_text(pipeline.context.requirement_doc, encoding="utf-8")
             print(f"  📄 需求文档已写入: {doc_path}")
@@ -141,7 +141,7 @@ async def main():
         output2 = await run_stage(engine, pipeline, 1)
         print(f"  ✅ {output2.summary}")
         if pipeline.context.solution_doc:
-            doc_path = Path(PROJECT_PATH) / "main" / "solution.md"
+            doc_path = Path(PROJECT_PATH) / "docs" / "solution.md"
             doc_path.parent.mkdir(parents=True, exist_ok=True)
             doc_path.write_text(pipeline.context.solution_doc, encoding="utf-8")
             print(f"  📄 方案文档已写入: {doc_path}")

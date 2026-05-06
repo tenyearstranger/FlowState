@@ -191,6 +191,9 @@ class GitService:
     def reset_hard(self, worktree: Path, ref: str) -> None:
         self._run(["reset", "--hard", ref], cwd=worktree, timeout_seconds=max(self.timeout_seconds, 60))
 
+    def clean_untracked(self, worktree: Path) -> None:
+        self._run(["clean", "-fd"], cwd=worktree, timeout_seconds=max(self.timeout_seconds, 60))
+
     def ensure_gitignore_entry(self, repo: Path, entry: str) -> None:
         gitignore_path = repo / ".gitignore"
         normalized = entry.strip()

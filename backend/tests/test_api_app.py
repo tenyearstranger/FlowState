@@ -11,6 +11,7 @@ from src.agents.requirement_agent import RequirementAgent
 from src.api.app import create_app
 from src.bootstrap import create_engine
 from src.models.pipeline import PipelineStatus, StageStatus, StageType
+from src.services.git_service import GitError
 from src.store.state_store import StateStore
 
 
@@ -466,7 +467,8 @@ def test_frontend_mock_create_pipeline(tmp_path):
         assert created_pipeline["projectPath"] == str(project_dir.resolve())
         assert "关键文件" in created_pipeline["projectSummary"]
         assert created_pipeline["requirementDocPath"] is not None
-        assert f".flowstate/{created_pipeline['id']}/docs/requirements.md" in created_pipeline["requirementDocPath"]
+        assert created_pipeline["requirementDocPath"].endswith("docs/requirements.md")
+        assert Path(created_pipeline["requirementDocPath"]).exists()
 
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
         backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
@@ -478,6 +480,7 @@ def test_frontend_mock_create_pipeline(tmp_path):
     assert detail_response.json()["status"] == "paused"
     requirement_doc_path = Path(backend_pipeline["context"]["requirement_doc_path"])
     assert requirement_doc_path.exists()
+    assert str(requirement_doc_path).startswith(str(project_dir.resolve()))
     assert "收藏功能" in requirement_doc_path.read_text(encoding="utf-8")
     assert len(backend_pipeline["context"]["git"]["stage_commits"]) >= 1
 
@@ -508,6 +511,30 @@ def test_frontend_mock_create_pipeline_rejects_invalid_project_path(tmp_path):
 
     assert create_response.status_code == 400
     assert "项目目录不存在" in create_response.json()["detail"]
+
+
+def test_create_pipeline_rejects_dirty_git_repo(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "dirty-repo"
+    project_dir.mkdir()
+
+    os.system(f"cd {project_dir} && git init -b main >/dev/null 2>&1")
+    os.system(f"cd {project_dir} && git config user.name 'FlowState Test' && git config user.email 'test@flowstate.local'")
+    (project_dir / "README.md").write_text("# demo\n", encoding="utf-8")
+    os.system(f"cd {project_dir} && git add README.md && git commit -m 'init' >/dev/null 2>&1")
+    (project_dir / "README.md").write_text("# demo\ndirty\n", encoding="utf-8")
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "在现有仓库上继续实现功能。",
+            },
+        )
+
+    assert create_response.status_code == 400
+    assert "未提交变更" in create_response.json()["detail"]
 
 
 def test_approve_requirement_checkpoint_advances_pipeline(tmp_path):
@@ -582,6 +609,39 @@ def test_reject_requirement_checkpoint_marks_feedback(tmp_path):
     assert updated_pipeline["stages"][0]["status"] in {"rejected", "awaiting_review"}
 
 
+def test_reject_stage_resets_git_and_cleans_untracked_files(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    service = client.app.state.pipeline_service
+    project_dir = tmp_path / "reject-clean-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用的需求分析。",
+            },
+        )
+        created_pipeline = create_response.json()
+        checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{checkpoint_id}/approve")
+
+    pipeline = asyncio.run(service.get_pipeline(created_pipeline["id"]))
+    assert pipeline is not None
+    worktree = Path(pipeline.context.git.worktree_path or "")
+    scratch = worktree / ".flowstate" / created_pipeline["id"] / "scratch.tmp"
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_text("stale scratch", encoding="utf-8")
+    assert scratch.exists()
+    solution_doc_path = Path(pipeline.context.solution_doc_path or "")
+    assert solution_doc_path.exists()
+
+    asyncio.run(service.reject_stage(created_pipeline["id"], 1, "请补充架构边界"))
+    assert not scratch.exists()
+    assert not solution_doc_path.exists()
+
+
 def test_approve_solution_checkpoint_generates_code(tmp_path):
     client, _ = create_test_client(tmp_path)
     project_dir = tmp_path / "coding-project"
@@ -626,10 +686,15 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
     assert (worktree / "app" / "main.py").exists()
     assert (worktree / "requirements.txt").exists()
     assert (worktree / "tests" / "test_app.py").exists()
-    test_doc = worktree / ".flowstate" / created_pipeline["id"] / "docs" / "test_report.md"
-    review_doc = worktree / ".flowstate" / created_pipeline["id"] / "docs" / "review_report.md"
+    assert (project_dir / "app" / "main.py").exists()
+    assert (project_dir / "requirements.txt").exists()
+    assert (project_dir / "tests" / "test_app.py").exists()
+    test_doc = worktree / "docs" / "test_report.md"
+    review_doc = worktree / "docs" / "review_report.md"
     assert test_doc.exists()
     assert review_doc.exists()
+    assert (project_dir / "docs" / "test_report.md").exists()
+    assert (project_dir / "docs" / "review_report.md").exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "代码评审"
         for item in checkpoints_response.json()
@@ -672,7 +737,9 @@ def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
     assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
     worktree = Path(backend_pipeline["context"]["git"]["worktree_path"])
     assert (worktree / "tests" / "test_app.py").exists()
-    assert (worktree / ".flowstate" / created_pipeline["id"] / "docs" / "test_report.md").exists()
+    assert (worktree / "docs" / "test_report.md").exists()
+    assert (project_dir / "tests" / "test_app.py").exists()
+    assert (project_dir / "docs" / "test_report.md").exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "测试生成"
         for item in checkpoints_response.json()
@@ -716,7 +783,8 @@ def test_approve_review_checkpoint_moves_delivery_to_waiting_review(tmp_path):
     assert updated_pipeline["stages"][5]["status"] == "awaiting_review"
     assert "交付汇总" in (updated_pipeline["stages"][5]["output"] or "")
     worktree = Path(backend_pipeline["context"]["git"]["worktree_path"])
-    assert (worktree / ".flowstate" / created_pipeline["id"] / "docs" / "delivery.md").exists()
+    assert (worktree / "docs" / "delivery.md").exists()
+    assert (project_dir / "docs" / "delivery.md").exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "交付集成"
         for item in checkpoints_response.json()
@@ -796,6 +864,65 @@ def test_git_status_and_cleanup_endpoints(tmp_path):
 
     assert status_after_cleanup.status_code == 200
     assert status_after_cleanup.json()["enabled"] is False
+
+
+def test_git_cleanup_failure_preserves_context(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    service = client.app.state.pipeline_service
+    project_dir = tmp_path / "git-cleanup-failure-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个简单功能并写需求文档。",
+            },
+        )
+        pipeline_id = create_response.json()["id"]
+
+    original_remove = service.git_service.remove_worktree
+
+    def failing_remove(repo, worktree_path, *, force=False):
+        raise GitError("remove failed")
+
+    service.git_service.remove_worktree = failing_remove
+    try:
+        pipeline = asyncio.run(service.cleanup_pipeline_git(pipeline_id))
+    finally:
+        service.git_service.remove_worktree = original_remove
+
+    assert pipeline.context.git.enabled is True
+    assert pipeline.context.git.worktree_path is not None
+    assert pipeline.context.git.working_branch is None or isinstance(pipeline.context.git.working_branch, str)
+    assert any("保留当前 Git 上下文" in log for log in pipeline.logs)
+
+
+def test_stage_commit_files_are_incremental(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "incremental-commit-project"
+    project_dir.mkdir()
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个自律应用的需求分析。",
+            },
+        )
+        created_pipeline = create_response.json()
+        requirement_checkpoint_id = f"cp-{created_pipeline['id']}-requirement_analysis"
+        client.post(f"/api/checkpoints/{requirement_checkpoint_id}/approve")
+        solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
+        client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
+
+    stage_commits = backend_pipeline["context"]["git"]["stage_commits"]
+    testing_commit = next(item for item in stage_commits if item["stage_type"] == "testing")
+    assert "tests/test_app.py" in testing_commit["files_changed"]
+    assert "app/main.py" not in testing_commit["files_changed"]
 
 
 def test_dynamic_token_analytics_and_agents(tmp_path):

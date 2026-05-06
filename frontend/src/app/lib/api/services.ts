@@ -2,7 +2,12 @@ import { apiClient } from "./client";
 import type { Agent } from "../../types/agent";
 import type { ActivityItem, AnalyticsOverview } from "../../types/analytics";
 import type { Checkpoint } from "../../types/checkpoint";
-import type { CreatePipelinePayload, Pipeline } from "../../types/pipeline";
+import type {
+  CreatePipelinePayload,
+  Pipeline,
+  PipelineGitContext,
+  PipelineGitStageCommit,
+} from "../../types/pipeline";
 import type { SettingsData, SettingsUpdatePayload, SettingsValidationResult, SettingsLlmConfig } from "../../types/settings";
 
 type RequestOptions = {
@@ -48,6 +53,13 @@ export const analyticsApi = {
 export const activitiesApi = {
   listRecent: (options?: RequestOptions) =>
     apiClient.get<ActivityItem[]>("/activities/recent", options),
+};
+
+export const gitApi = {
+  getStatus: (pipelineId: string, options?: RequestOptions) =>
+    apiClient.get<PipelineGitContext>(`/v1/pipelines/${pipelineId}/git/status`, options),
+  getStageLog: (pipelineId: string, options?: RequestOptions) =>
+    apiClient.get<PipelineGitStageCommit[]>(`/v1/pipelines/${pipelineId}/git/log`, options),
 };
 
 export const settingsApi = {
