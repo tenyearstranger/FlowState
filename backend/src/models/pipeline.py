@@ -1,4 +1,4 @@
-"""FlowState pipline 数据模型"""
+"""FlowState pipeline 数据模型"""
 
 from enum import Enum
 from datetime import datetime
@@ -41,6 +41,44 @@ class ApproveAction(str, Enum):
     REVISE = "revise"
 
 
+class GitMode(str, Enum):
+    DISABLED = "disabled"
+    WORKTREE = "worktree"
+
+
+class StageCommit(BaseModel):
+    """每个 stage 完成时的 commit 锚点。"""
+
+    stage_type: StageType
+    commit_sha: str
+    commit_message: str
+    committed_at: datetime
+    files_changed: list[str] = Field(default_factory=list)
+
+
+class GitContext(BaseModel):
+    mode: GitMode = GitMode.DISABLED
+    enabled: bool = False
+
+    repo_root: Optional[str] = None
+    base_branch: Optional[str] = None
+    base_commit: Optional[str] = None
+
+    worktree_path: Optional[str] = None
+    working_branch: Optional[str] = None
+    initialized: bool = False
+
+    stage_commits: list[StageCommit] = Field(default_factory=list)
+
+    total_files_changed: list[str] = Field(default_factory=list)
+    head_commit: Optional[str] = None
+    diff_stats: Optional[dict] = None
+
+    pr_title: Optional[str] = None
+    pr_description: Optional[str] = None
+    pr_command: Optional[str] = None
+
+
 class PipelineContext(BaseModel):
     """贯穿整个 Pipeline 的上下文"""
     project_path: str = ""
@@ -55,6 +93,8 @@ class PipelineContext(BaseModel):
     test_report: Optional[str] = None
     review_report: Optional[str] = None
     delivery_result: Optional[str] = None
+    code_diff: Optional[str] = None
+    git: GitContext = Field(default_factory=GitContext)
 
 
 class StageNode(BaseModel):
@@ -83,9 +123,9 @@ class Pipeline(BaseModel):
     )
     title: str = ""
     status: PipelineStatus = PipelineStatus.PENDING
-    stages: List[StageNode] = []
-    context: PipelineContext = PipelineContext()
-    logs: List[str] = []
+    stages: List[StageNode] = Field(default_factory=list)
+    context: PipelineContext = Field(default_factory=PipelineContext)
+    logs: List[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     error: Optional[str] = None

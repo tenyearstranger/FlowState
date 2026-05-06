@@ -6,4 +6,7 @@ from .pipeline import (
     PipelineStatus,
     PipelineContext,
     ApproveAction,
+    GitContext,
+    GitMode,
+    StageCommit,
 )

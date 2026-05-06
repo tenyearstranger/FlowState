@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import os
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -326,6 +327,12 @@ def create_test_client(tmp_path):
     return TestClient(app), engine
 
 
+def _load_backend_pipeline(client: TestClient, pipeline_id: str) -> dict:
+    response = client.get(f"/api/v1/pipelines/{pipeline_id}")
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_healthcheck(tmp_path):
     client, _ = create_test_client(tmp_path)
 
@@ -458,17 +465,21 @@ def test_frontend_mock_create_pipeline(tmp_path):
         assert "package.json" in created_pipeline["stages"][0]["output"]
         assert created_pipeline["projectPath"] == str(project_dir.resolve())
         assert "关键文件" in created_pipeline["projectSummary"]
-        assert created_pipeline["requirementDocPath"] == str((project_dir / "main" / "requirements.md").resolve())
+        assert created_pipeline["requirementDocPath"] is not None
+        assert f".flowstate/{created_pipeline['id']}/docs/requirements.md" in created_pipeline["requirementDocPath"]
 
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         logs_response = client.get(f"/api/pipelines/{created_pipeline['id']}/logs")
         checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert detail_response.status_code == 200
     assert detail_response.json()["id"] == created_pipeline["id"]
     assert detail_response.json()["status"] == "paused"
-    assert (project_dir / "main" / "requirements.md").exists()
-    assert "收藏功能" in (project_dir / "main" / "requirements.md").read_text(encoding="utf-8")
+    requirement_doc_path = Path(backend_pipeline["context"]["requirement_doc_path"])
+    assert requirement_doc_path.exists()
+    assert "收藏功能" in requirement_doc_path.read_text(encoding="utf-8")
+    assert len(backend_pipeline["context"]["git"]["stage_commits"]) >= 1
 
     assert logs_response.status_code == 200
     assert any("工作目录" in log for log in logs_response.json())
@@ -517,6 +528,7 @@ def test_approve_requirement_checkpoint_advances_pipeline(tmp_path):
 
         approve_response = client.post(f"/api/checkpoints/{checkpoint_id}/approve")
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         pending_checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert approve_response.status_code == 200
@@ -529,8 +541,9 @@ def test_approve_requirement_checkpoint_advances_pipeline(tmp_path):
     assert updated_pipeline["stages"][1]["status"] == "awaiting_review"
     assert updated_pipeline["stages"][1]["tokens"] == 600
     assert "技术方案文档" in updated_pipeline["stages"][1]["output"]
-    assert (project_dir / "main" / "solution.md").exists()
-    assert "创建计划" in (project_dir / "main" / "solution.md").read_text(encoding="utf-8")
+    solution_doc_path = Path(backend_pipeline["context"]["solution_doc_path"])
+    assert solution_doc_path.exists()
+    assert "创建计划" in solution_doc_path.read_text(encoding="utf-8")
 
     assert pending_checkpoints_response.status_code == 200
     assert all(item["id"] != checkpoint_id for item in pending_checkpoints_response.json())
@@ -590,6 +603,7 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
         solution_checkpoint_id = f"cp-{created_pipeline['id']}-solution_design"
         approve_solution_response = client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert approve_solution_response.status_code == 200
@@ -608,11 +622,14 @@ def test_approve_solution_checkpoint_generates_code(tmp_path):
     assert "FastAPI()" in (updated_pipeline["stages"][2]["output"] or "")
     assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
     assert "代码评审报告" in (updated_pipeline["stages"][4]["output"] or "")
-    assert (project_dir / "app" / "main.py").exists()
-    assert (project_dir / "requirements.txt").exists()
-    assert (project_dir / "tests" / "test_app.py").exists()
-    assert (project_dir / "main" / "test_report.md").exists()
-    assert (project_dir / "main" / "review_report.md").exists()
+    worktree = Path(backend_pipeline["context"]["git"]["worktree_path"])
+    assert (worktree / "app" / "main.py").exists()
+    assert (worktree / "requirements.txt").exists()
+    assert (worktree / "tests" / "test_app.py").exists()
+    test_doc = worktree / ".flowstate" / created_pipeline["id"] / "docs" / "test_report.md"
+    review_doc = worktree / ".flowstate" / created_pipeline["id"] / "docs" / "review_report.md"
+    assert test_doc.exists()
+    assert review_doc.exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "代码评审"
         for item in checkpoints_response.json()
@@ -642,6 +659,7 @@ def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
         client.post(f"/api/checkpoints/{solution_checkpoint_id}/approve")
 
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert detail_response.status_code == 200
@@ -652,8 +670,9 @@ def test_failing_test_stage_waits_for_approval_and_blocks_review(tmp_path):
     assert updated_pipeline["stages"][4]["status"] == "idle"
     assert updated_pipeline["stages"][3]["tokens"] == 180
     assert "测试报告" in (updated_pipeline["stages"][3]["output"] or "")
-    assert (project_dir / "tests" / "test_app.py").exists()
-    assert (project_dir / "main" / "test_report.md").exists()
+    worktree = Path(backend_pipeline["context"]["git"]["worktree_path"])
+    assert (worktree / "tests" / "test_app.py").exists()
+    assert (worktree / ".flowstate" / created_pipeline["id"] / "docs" / "test_report.md").exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "测试生成"
         for item in checkpoints_response.json()
@@ -684,6 +703,7 @@ def test_approve_review_checkpoint_moves_delivery_to_waiting_review(tmp_path):
         review_checkpoint_id = f"cp-{created_pipeline['id']}-code_review"
         approve_review_response = client.post(f"/api/checkpoints/{review_checkpoint_id}/approve")
         detail_response = client.get(f"/api/pipelines/{created_pipeline['id']}")
+        backend_pipeline = _load_backend_pipeline(client, created_pipeline["id"])
         checkpoints_response = client.get("/api/checkpoints", params={"status": "pending"})
 
     assert approve_review_response.status_code == 200
@@ -695,7 +715,8 @@ def test_approve_review_checkpoint_moves_delivery_to_waiting_review(tmp_path):
     assert updated_pipeline["stages"][4]["status"] == "completed"
     assert updated_pipeline["stages"][5]["status"] == "awaiting_review"
     assert "交付汇总" in (updated_pipeline["stages"][5]["output"] or "")
-    assert (project_dir / "main" / "delivery.md").exists()
+    worktree = Path(backend_pipeline["context"]["git"]["worktree_path"])
+    assert (worktree / ".flowstate" / created_pipeline["id"] / "docs" / "delivery.md").exists()
     assert any(
         item["pipelineId"] == created_pipeline["id"] and item["stage"] == "交付集成"
         for item in checkpoints_response.json()
@@ -738,6 +759,43 @@ def test_approve_delivery_checkpoint_completes_pipeline(tmp_path):
     assert updated_pipeline["status"] == "completed"
     assert updated_pipeline["stages"][5]["status"] == "completed"
     assert updated_pipeline["stages"][5]["tokens"] == 200
+
+
+def test_git_status_and_cleanup_endpoints(tmp_path):
+    client, _ = create_test_client(tmp_path)
+    project_dir = tmp_path / "git-status-project"
+    project_dir.mkdir()
+    (project_dir / "README.md").write_text("# demo", encoding="utf-8")
+
+    with client:
+        create_response = client.post(
+            "/api/pipelines",
+            json={
+                "projectPath": str(project_dir),
+                "requirement": "实现一个简单功能并写需求文档。",
+            },
+        )
+        assert create_response.status_code == 201
+        pipeline_id = create_response.json()["id"]
+
+        status_response = client.get(f"/api/v1/pipelines/{pipeline_id}/git/status")
+        diff_response = client.get(f"/api/v1/pipelines/{pipeline_id}/git/diff")
+        cleanup_response = client.delete(f"/api/v1/pipelines/{pipeline_id}/git")
+        status_after_cleanup = client.get(f"/api/v1/pipelines/{pipeline_id}/git/status")
+
+    assert status_response.status_code == 200
+    git_status = status_response.json()
+    assert git_status["enabled"] is True
+    assert git_status["mode"] == "worktree"
+    assert git_status["worktree_path"]
+
+    assert diff_response.status_code == 200
+
+    assert cleanup_response.status_code == 200
+    assert cleanup_response.json()["enabled"] is False
+
+    assert status_after_cleanup.status_code == 200
+    assert status_after_cleanup.json()["enabled"] is False
 
 
 def test_dynamic_token_analytics_and_agents(tmp_path):

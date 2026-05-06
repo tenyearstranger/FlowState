@@ -154,7 +154,7 @@ class SettingsService:
             "checkpointTimeoutMinutes": 60,
             "autoCreateBranch": True,
             "autoCommitCode": True,
-            "autoCreateMR": True,
+            "autoCreateMR": False,
             "branchNamePattern": "devflow/{pipeline-id}-{slug}",
             "repositoryPath": "./src",
             "semanticIndex": False,

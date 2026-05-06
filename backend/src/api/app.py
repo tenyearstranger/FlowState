@@ -9,6 +9,7 @@ from src.api.routers.agents import router as agents_router
 from src.api.routers.analytics import router as analytics_router
 from src.api.routers.checkpoints import router as checkpoints_router
 from src.api.routers.health import router as health_router
+from src.api.routers.git import router as git_router
 from src.api.routers.pipelines import router as pipelines_router
 from src.api.routers.pipelines import ui_router as ui_pipelines_router
 from src.api.service import PipelineService
@@ -50,6 +51,7 @@ def create_app(engine=None, service: PipelineService | None = None) -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(activities_router)
     app.include_router(pipelines_router)
+    app.include_router(git_router)
     app.include_router(settings_router)
     return app
 

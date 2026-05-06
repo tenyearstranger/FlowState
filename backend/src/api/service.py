@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shlex
 from datetime import datetime
 from pathlib import Path
 
@@ -15,13 +17,18 @@ from src.agents.solution_agent import SolutionAgent
 from src.agents.test_agent import TestAgent
 from src.models.pipeline import (
     ApproveAction,
+    GitContext,
+    GitMode,
     Pipeline,
     PipelineContext,
     PipelineStatus,
+    StageCommit,
     StageNode,
     StageStatus,
     StageType,
 )
+from src.config import get_config
+from src.services.git_service import GitError, GitService, NestedRepoError
 from src.store.state_store import StateStore
 
 
@@ -79,6 +86,24 @@ def _append_usage_log(pipeline: Pipeline, stage: StageNode) -> None:
 
 class PipelineValidationError(ValueError):
     """Raised when incoming pipeline creation data is invalid."""
+
+
+STAGE_INDEX_MAP = {
+    StageType.REQUIREMENT: 0,
+    StageType.SOLUTION: 1,
+    StageType.CODING: 2,
+    StageType.TESTING: 3,
+    StageType.REVIEW: 4,
+    StageType.DELIVERY: 5,
+}
+
+STAGE_COMMIT_MESSAGE_MAP = {
+    StageType.REQUIREMENT: "docs(flowstate): structured requirements",
+    StageType.SOLUTION: "docs(flowstate): solution design",
+    StageType.CODING: "feat(flowstate): implement {title}",
+    StageType.TESTING: "test(flowstate): add tests and report",
+    StageType.DELIVERY: "chore(flowstate): finalize delivery",
+}
 
 
 def _resolve_project_path(project_path: str) -> Path | None:
@@ -139,13 +164,28 @@ def _summarize_project_path(project_path: Path) -> str:
     )
 
 
-def _write_project_doc(project_path: str, filename: str, content: str) -> Path:
-    if not project_path:
-        raise PipelineValidationError("缺少项目目录，无法写入阶段文档")
+def _effective_project_path(pipeline: Pipeline) -> str:
+    git_ctx = pipeline.context.git
+    if git_ctx.enabled and git_ctx.worktree_path:
+        return git_ctx.worktree_path
+    return pipeline.context.project_path
 
-    main_dir = Path(project_path) / "main"
-    main_dir.mkdir(parents=True, exist_ok=True)
-    doc_path = main_dir / filename
+
+def _resolve_doc_dir(pipeline: Pipeline) -> Path:
+    git_ctx = pipeline.context.git
+    if git_ctx.enabled and git_ctx.worktree_path:
+        base = Path(git_ctx.worktree_path)
+    elif pipeline.context.project_path:
+        base = Path(pipeline.context.project_path)
+    else:
+        raise PipelineValidationError("缺少项目目录，无法写入阶段文档")
+    return base / ".flowstate" / pipeline.id / "docs"
+
+
+def _write_project_doc(pipeline: Pipeline, filename: str, content: str) -> Path:
+    doc_dir = _resolve_doc_dir(pipeline)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = doc_dir / filename
     doc_path.write_text(content, encoding="utf-8")
     return doc_path
 
@@ -179,6 +219,10 @@ class PipelineService:
     def __init__(self, engine=None, state_store: StateStore | None = None):
         self.engine = engine
         self.state_store = state_store or getattr(engine, "state_store", None) or StateStore()
+        self.git_service = GitService()
+        cfg = get_config()
+        if cfg.git.enabled and not self.git_service.is_git_available():
+            raise RuntimeError("Git 集成已启用，但未检测到 git 命令")
 
     async def create_pipeline(
         self,
@@ -223,6 +267,16 @@ class PipelineService:
                 *([f"[{_timestamp()}] 项目目录扫描完成"] if project_summary else []),
             ]
 
+        try:
+            self._prepare_git_context(
+                pipeline=pipeline,
+                resolved_project_path=resolved_project_path,
+            )
+        except NestedRepoError as error:
+            raise PipelineValidationError(f"NESTED_REPO: {error}") from error
+        except GitError as error:
+            raise PipelineValidationError(f"GIT_ERROR: {error}") from error
+
         if start_immediately and pipeline.stages:
             await self._run_requirement_analysis(pipeline)
 
@@ -239,8 +293,237 @@ class PipelineService:
         pipeline = await self.state_store.load(pipeline_id)
         if pipeline is None:
             return False
+        self._cleanup_git_context(pipeline)
         await self.state_store.delete(pipeline_id)
         return True
+
+    async def cleanup_pipeline_git(self, pipeline_id: str) -> Pipeline:
+        pipeline = await self.state_store.load(pipeline_id)
+        if pipeline is None:
+            raise ValueError(f"Pipeline not found: {pipeline_id}")
+        self._cleanup_git_context(pipeline)
+        await self.state_store.save(pipeline)
+        return pipeline
+
+    def git_diff_for_pipeline(self, pipeline: Pipeline, stage_type: StageType | None = None) -> str:
+        git_ctx = pipeline.context.git
+        if not git_ctx.enabled or not git_ctx.worktree_path or not git_ctx.base_commit:
+            return ""
+
+        worktree = Path(git_ctx.worktree_path)
+        if stage_type is None:
+            head = git_ctx.head_commit or "HEAD"
+            return self.git_service.diff(worktree, base=git_ctx.base_commit, head=head)
+
+        stage_commit = next(
+            (item for item in git_ctx.stage_commits if item.stage_type == stage_type),
+            None,
+        )
+        if stage_commit is None:
+            return ""
+
+        prev_candidates = [
+            item
+            for item in git_ctx.stage_commits
+            if STAGE_INDEX_MAP[item.stage_type] < STAGE_INDEX_MAP[stage_type]
+        ]
+        base = prev_candidates[-1].commit_sha if prev_candidates else git_ctx.base_commit
+        return self.git_service.diff(worktree, base=base, head=stage_commit.commit_sha)
+
+    def _prepare_git_context(self, *, pipeline: Pipeline, resolved_project_path: Path | None) -> None:
+        cfg = get_config().git
+        if not cfg.enabled or resolved_project_path is None:
+            pipeline.context.git = GitContext(mode=GitMode.DISABLED, enabled=False)
+            return
+
+        target_path = resolved_project_path
+        initialized = False
+        repo_root = self.git_service.find_repo_root(target_path)
+        if repo_root is not None and repo_root != target_path:
+            raise NestedRepoError(
+                f"路径 {target_path} 位于仓库 {repo_root} 内，请选择仓库根目录"
+            )
+        if repo_root is None:
+            enclosing_repo = self.git_service.find_enclosing_repo(target_path)
+            if enclosing_repo is not None and enclosing_repo != target_path:
+                raise NestedRepoError(
+                    f"路径 {target_path} 位于仓库 {enclosing_repo} 内，请选择仓库根目录"
+                )
+            if not cfg.auto_init_if_missing:
+                pipeline.context.git = GitContext(mode=GitMode.DISABLED, enabled=False)
+                return
+            self.git_service.write_default_gitignore(target_path)
+            self.git_service.init_repo(target_path, default_branch=cfg.default_base_branch)
+            self.git_service.baseline_commit(target_path)
+            initialized = True
+            repo_root = target_path
+
+        base_branch = self.git_service.current_branch(repo_root)
+        base_commit = self.git_service.head_commit(repo_root)
+        working_branch = self._build_working_branch_name(pipeline)
+        worktree_path = repo_root / ".flowstate" / "worktrees" / pipeline.id
+        try:
+            self.git_service.delete_branch(repo_root, working_branch, force=True)
+        except GitError:
+            pass
+        self.git_service.add_worktree(
+            repo=repo_root,
+            worktree_path=worktree_path,
+            branch=working_branch,
+            base=base_commit,
+        )
+        self.git_service.ensure_flowstate_worktree_ignore(repo_root)
+
+        pipeline.context.git = GitContext(
+            mode=GitMode.WORKTREE,
+            enabled=True,
+            repo_root=str(repo_root),
+            base_branch=base_branch,
+            base_commit=base_commit,
+            worktree_path=str(worktree_path),
+            working_branch=working_branch,
+            initialized=initialized,
+            stage_commits=[],
+            total_files_changed=[],
+            head_commit=self.git_service.head_commit(worktree_path),
+            diff_stats={"files": 0, "insertions": 0, "deletions": 0},
+        )
+        pipeline.logs.append(
+            f"[{_timestamp()}] 已创建工作分支 {working_branch}，工作目录 {worktree_path}"
+        )
+
+    def _build_working_branch_name(self, pipeline: Pipeline) -> str:
+        cfg = get_config().git
+        slug = self._slugify_title(pipeline.title or pipeline.context.requirement_raw)
+        template = cfg.branch_naming_template or "devflow/{pipeline_id}-{slug}"
+        branch = template.replace("{pipeline_id}", pipeline.id).replace("{slug}", slug)
+        branch = re.sub(r"/+", "/", branch).strip("/")
+        return branch or f"devflow/{pipeline.id}"
+
+    def _slugify_title(self, text: str) -> str:
+        lowered = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
+        if not lowered:
+            return "task"
+        return lowered[:24]
+
+    def _build_agent_input_context(self, pipeline: Pipeline) -> dict:
+        context = pipeline.context.model_dump()
+        context["project_path"] = _effective_project_path(pipeline)
+        return context
+
+    def _commit_stage(self, pipeline: Pipeline, stage_type: StageType, commit_message: str) -> None:
+        cfg = get_config().git
+        git_ctx = pipeline.context.git
+        if not cfg.commit_per_stage:
+            return
+        if stage_type == StageType.REVIEW and not cfg.commit_review_report:
+            return
+        if not git_ctx.enabled or not git_ctx.worktree_path:
+            return
+
+        worktree = Path(git_ctx.worktree_path)
+        if not self.git_service.has_changes(worktree):
+            return
+
+        self.git_service.stage_all(worktree)
+        sha = self.git_service.commit(worktree, commit_message)
+        files_changed = self.git_service.changed_files(
+            worktree,
+            base=git_ctx.base_commit or sha,
+            head=sha,
+        )
+        git_ctx.stage_commits.append(
+            StageCommit(
+                stage_type=stage_type,
+                commit_sha=sha,
+                commit_message=commit_message,
+                committed_at=datetime.now(),
+                files_changed=files_changed,
+            )
+        )
+        git_ctx.head_commit = sha
+        if git_ctx.base_commit:
+            git_ctx.diff_stats = self.git_service.diff_stats(worktree, base=git_ctx.base_commit, head=sha)
+            git_ctx.total_files_changed = self.git_service.changed_files(
+                worktree,
+                base=git_ctx.base_commit,
+                head=sha,
+            )
+        pipeline.logs.append(f"[{_timestamp()}] [{stage_type.value}] commit {sha[:7]}: {commit_message}")
+
+    def _default_commit_message(self, pipeline: Pipeline, stage_type: StageType) -> str:
+        template = STAGE_COMMIT_MESSAGE_MAP.get(stage_type)
+        if template is None:
+            return f"chore(flowstate): update {stage_type.value}"
+        short_title = self._slugify_title(pipeline.title or pipeline.context.requirement_raw).replace("-", " ")
+        return template.format(title=short_title or "changes")
+
+    def _find_prev_commit_anchor(self, pipeline: Pipeline, stage_index: int) -> StageCommit | None:
+        candidates = [
+            commit
+            for commit in pipeline.context.git.stage_commits
+            if STAGE_INDEX_MAP.get(commit.stage_type, 999) < stage_index
+        ]
+        return candidates[-1] if candidates else None
+
+    def _reset_git_to_anchor(self, pipeline: Pipeline, stage_index: int) -> None:
+        git_ctx = pipeline.context.git
+        if not git_ctx.enabled or not git_ctx.worktree_path:
+            return
+        target_commit = self._find_prev_commit_anchor(pipeline, stage_index)
+        target_sha = target_commit.commit_sha if target_commit else git_ctx.base_commit
+        if not target_sha:
+            return
+
+        try:
+            worktree = Path(git_ctx.worktree_path)
+            self.git_service.reset_hard(worktree, target_sha)
+            git_ctx.stage_commits = [
+                commit
+                for commit in git_ctx.stage_commits
+                if STAGE_INDEX_MAP.get(commit.stage_type, 999) < stage_index
+            ]
+            git_ctx.head_commit = target_sha
+            if git_ctx.base_commit:
+                git_ctx.diff_stats = self.git_service.diff_stats(
+                    worktree,
+                    base=git_ctx.base_commit,
+                    head=target_sha,
+                )
+                git_ctx.total_files_changed = self.git_service.changed_files(
+                    worktree,
+                    base=git_ctx.base_commit,
+                    head=target_sha,
+                )
+            pipeline.logs.append(f"[{_timestamp()}] Git 已回退到 {target_sha[:7]}")
+        except GitError as error:
+            pipeline.logs.append(f"[{_timestamp()}] Git 回退失败: {error}")
+
+    def _cleanup_git_context(self, pipeline: Pipeline) -> None:
+        git_ctx = pipeline.context.git
+        if not git_ctx.enabled:
+            return
+
+        repo_root = Path(git_ctx.repo_root) if git_ctx.repo_root else None
+        worktree_path = Path(git_ctx.worktree_path) if git_ctx.worktree_path else None
+
+        if repo_root is not None and worktree_path is not None:
+            try:
+                self.git_service.remove_worktree(repo_root, worktree_path, force=True)
+            except GitError as error:
+                pipeline.logs.append(f"[{_timestamp()}] 清理 worktree 失败: {error}")
+
+        if repo_root is not None and git_ctx.working_branch:
+            try:
+                self.git_service.delete_branch(repo_root, git_ctx.working_branch, force=True)
+            except GitError as error:
+                pipeline.logs.append(f"[{_timestamp()}] 删除分支失败: {error}")
+
+        git_ctx.mode = GitMode.DISABLED
+        git_ctx.enabled = False
+        git_ctx.worktree_path = None
+        git_ctx.working_branch = None
+        git_ctx.head_commit = git_ctx.base_commit
 
     async def pause_pipeline(self, pipeline_id: str) -> Pipeline:
         pipeline = await self.state_store.load(pipeline_id)
@@ -322,6 +605,7 @@ class PipelineService:
             stage.completed_at = None
             stage.retry_count += 1
 
+        self._reset_git_to_anchor(pipeline, failed_index)
         pipeline.status = PipelineStatus.RUNNING
         pipeline.error = None
         pipeline.updated_at = datetime.now()
@@ -438,6 +722,7 @@ class PipelineService:
             f"[{_timestamp()}] Stage 状态重置为 PENDING，并提交后台 Agent 重新执行..."
         )
 
+        self._reset_git_to_anchor(pipeline, stage_index)
         await self.state_store.save(pipeline)
         return pipeline
 
@@ -490,7 +775,7 @@ class PipelineService:
 
             input_data = AgentInput(
                 task_description="执行阶段: requirement_analysis",
-                context=pipeline.context.model_dump(),
+                context=self._build_agent_input_context(pipeline),
                 human_feedback=requirement_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -507,7 +792,7 @@ class PipelineService:
             pipeline.context.requirement_doc = requirement_doc
             if requirement_doc:
                 requirement_doc_path = _write_project_doc(
-                    pipeline.context.project_path,
+                    pipeline,
                     "requirements.md",
                     requirement_doc,
                 )
@@ -524,6 +809,11 @@ class PipelineService:
                 pipeline.logs.append(
                     f"[{_timestamp()}] 需求文档已写入: {pipeline.context.requirement_doc_path}"
                 )
+            self._commit_stage(
+                pipeline,
+                StageType.REQUIREMENT,
+                self._default_commit_message(pipeline, StageType.REQUIREMENT),
+            )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 需求分析进入人工确认，等待审批")
             await self.state_store.save(pipeline)
@@ -577,7 +867,7 @@ class PipelineService:
 
             input_data = AgentInput(
                 task_description="执行阶段: solution_design",
-                context=pipeline.context.model_dump(),
+                context=self._build_agent_input_context(pipeline),
                 human_feedback=solution_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -597,7 +887,7 @@ class PipelineService:
                 pipeline.context.solution_structured = structured_solution
             if solution_doc:
                 solution_doc_path = _write_project_doc(
-                    pipeline.context.project_path,
+                    pipeline,
                     "solution.md",
                     solution_doc,
                 )
@@ -614,6 +904,11 @@ class PipelineService:
                 pipeline.logs.append(
                     f"[{_timestamp()}] 技术方案文档已写入: {pipeline.context.solution_doc_path}"
                 )
+            self._commit_stage(
+                pipeline,
+                StageType.SOLUTION,
+                self._default_commit_message(pipeline, StageType.SOLUTION),
+            )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 方案设计进入人工确认，等待审批")
             await self.state_store.save(pipeline)
@@ -652,7 +947,7 @@ class PipelineService:
 
             input_data = AgentInput(
                 task_description="执行阶段: coding",
-                context=pipeline.context.model_dump(),
+                context=self._build_agent_input_context(pipeline),
                 human_feedback=coding_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -666,7 +961,7 @@ class PipelineService:
             if isinstance(generated_files, dict):
                 pipeline.context.generated_code = generated_files
                 written_files = _write_generated_code(
-                    pipeline.context.project_path,
+                    _effective_project_path(pipeline),
                     generated_files,
                 )
             else:
@@ -679,6 +974,11 @@ class PipelineService:
             if written_files:
                 preview = "、".join(Path(path).name for path in written_files[:5])
                 pipeline.logs.append(f"[{_timestamp()}] 生成代码已写入: {preview}")
+            self._commit_stage(
+                pipeline,
+                StageType.CODING,
+                self._default_commit_message(pipeline, StageType.CODING),
+            )
             await self.state_store.save(pipeline)
             await self._run_testing(pipeline)
         except Exception as error:
@@ -716,7 +1016,7 @@ class PipelineService:
 
             input_data = AgentInput(
                 task_description="执行阶段: testing",
-                context=pipeline.context.model_dump(),
+                context=self._build_agent_input_context(pipeline),
                 human_feedback=testing_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -734,7 +1034,7 @@ class PipelineService:
             if isinstance(test_report, str) and test_report.strip():
                 pipeline.context.test_report = test_report
                 report_path = _write_project_doc(
-                    pipeline.context.project_path,
+                    pipeline,
                     "test_report.md",
                     test_report,
                 )
@@ -743,7 +1043,7 @@ class PipelineService:
             test_files = output.result.get("test_files")
             if isinstance(test_files, dict):
                 written_tests = _write_generated_code(
-                    pipeline.context.project_path,
+                    _effective_project_path(pipeline),
                     test_files,
                 )
             else:
@@ -760,6 +1060,11 @@ class PipelineService:
             if written_tests:
                 preview = "、".join(Path(path).name for path in written_tests[:5])
                 pipeline.logs.append(f"[{_timestamp()}] 生成测试文件已写入: {preview}")
+            self._commit_stage(
+                pipeline,
+                StageType.TESTING,
+                self._default_commit_message(pipeline, StageType.TESTING),
+            )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 测试阶段进入人工确认，等待审批")
             await self.state_store.save(pipeline)
@@ -798,9 +1103,16 @@ class PipelineService:
             else:
                 agent = ReviewAgent()
 
+            review_context = self._build_agent_input_context(pipeline)
+            try:
+                review_context["code_diff"] = self.git_diff_for_pipeline(pipeline)
+            except GitError as error:
+                pipeline.logs.append(f"[{_timestamp()}] 生成 diff 失败: {error}")
+                review_context["code_diff"] = ""
+            pipeline.context.code_diff = str(review_context.get("code_diff") or "")
             input_data = AgentInput(
                 task_description="执行阶段: code_review",
-                context=pipeline.context.model_dump(),
+                context=review_context,
                 human_feedback=review_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -818,7 +1130,7 @@ class PipelineService:
             if isinstance(review_report, str) and review_report.strip():
                 pipeline.context.review_report = review_report
                 review_path = _write_project_doc(
-                    pipeline.context.project_path,
+                    pipeline,
                     "review_report.md",
                     review_report,
                 )
@@ -832,6 +1144,11 @@ class PipelineService:
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
             _append_usage_log(pipeline, review_stage)
+            self._commit_stage(
+                pipeline,
+                StageType.REVIEW,
+                self._default_commit_message(pipeline, StageType.REVIEW),
+            )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 代码评审进入人工确认，等待审批")
             await self.state_store.save(pipeline)
@@ -872,7 +1189,7 @@ class PipelineService:
 
             input_data = AgentInput(
                 task_description="执行阶段: delivery",
-                context=pipeline.context.model_dump(),
+                context=self._build_agent_input_context(pipeline),
                 human_feedback=delivery_stage.human_feedback,
             )
             output = await agent.execute(input_data)
@@ -890,11 +1207,30 @@ class PipelineService:
             if isinstance(delivery_result, str) and delivery_result.strip():
                 pipeline.context.delivery_result = delivery_result
                 delivery_path = _write_project_doc(
-                    pipeline.context.project_path,
+                    pipeline,
                     "delivery.md",
                     delivery_result,
                 )
                 pipeline.logs.append(f"[{_timestamp()}] 交付文档已写入: {delivery_path}")
+
+            pr_title = str(output.result.get("pr_title") or "").strip()
+            pr_description = str(output.result.get("pr_description") or "").strip()
+            if pr_title:
+                pipeline.context.git.pr_title = pr_title
+            if pr_description:
+                pipeline.context.git.pr_description = pr_description
+                pr_markdown = f"# {pr_title or 'FlowState Delivery'}\n\n{pr_description}"
+                _write_project_doc(pipeline, "pr.md", pr_markdown)
+
+            git_ctx = pipeline.context.git
+            if git_ctx.enabled and git_ctx.working_branch and git_ctx.base_branch and pr_title:
+                pr_body_file = f".flowstate/{pipeline.id}/docs/pr.md"
+                git_ctx.pr_command = (
+                    f"gh pr create --title {shlex.quote(pr_title)} "
+                    f"--body-file {shlex.quote(pr_body_file)} "
+                    f"--head {shlex.quote(git_ctx.working_branch)} "
+                    f"--base {shlex.quote(git_ctx.base_branch)}"
+                )
 
             pipeline.updated_at = now
             pipeline.status = (
@@ -904,6 +1240,11 @@ class PipelineService:
             )
             pipeline.logs.append(f"[{_timestamp()}] {output.summary}")
             _append_usage_log(pipeline, delivery_stage)
+            self._commit_stage(
+                pipeline,
+                StageType.DELIVERY,
+                self._default_commit_message(pipeline, StageType.DELIVERY),
+            )
             if output.needs_human_review:
                 pipeline.logs.append(f"[{_timestamp()}] 交付阶段进入人工确认，等待审批")
             else:

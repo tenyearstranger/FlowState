@@ -100,6 +100,20 @@ class PipelineSettings:
 
 
 @dataclass
+class GitSettings:
+    """Git 集成配置"""
+
+    enabled: bool = True
+    auto_init_if_missing: bool = True
+    default_base_branch: str = "main"
+    branch_naming_template: str = "devflow/{pipeline_id}-{slug}"
+    commit_per_stage: bool = True
+    commit_review_report: bool = False
+    auto_push: bool = False
+    auto_create_pr: bool = False
+
+
+@dataclass
 class CodeGenSettings:
     """代码生成相关配置"""
     output_dir: str = "./generated_output"
@@ -123,6 +137,9 @@ class FlowStateConfig:
 
     # Pipeline 运行配置
     pipeline: PipelineSettings = field(default_factory=PipelineSettings)
+
+    # Git 集成配置
+    git: GitSettings = field(default_factory=GitSettings)
 
     # 代码生成配置
     codegen: CodeGenSettings = field(default_factory=CodeGenSettings)
@@ -313,7 +330,17 @@ def _resolve_env_var(value: Any) -> Any:
 def _deep_merge(cfg: FlowStateConfig, data: dict) -> None:
     """将 dict 数据递归合并到配置对象"""
     llm_fields = {"provider", "model", "api_key", "base_url", "temperature", "max_tokens"}
-    pipeline_fields = {"output_mode", "storage_dir", "max_retries_per_stage"}
+    pipeline_fields = {"output_mode", "storage_dir", "max_retries_per_stage", "auto_cleanup_days"}
+    git_fields = {
+        "enabled",
+        "auto_init_if_missing",
+        "default_base_branch",
+        "branch_naming_template",
+        "commit_per_stage",
+        "commit_review_report",
+        "auto_push",
+        "auto_create_pr",
+    }
     codegen_fields = {"output_dir", "default_language", "default_framework",
                       "include_docker", "include_tests", "include_docs"}
 
@@ -337,6 +364,11 @@ def _deep_merge(cfg: FlowStateConfig, data: dict) -> None:
                     except ValueError:
                         continue
                 setattr(cfg.pipeline, k, v)
+
+    if "git" in data and isinstance(data["git"], dict):
+        for k, v in data["git"].items():
+            if k in git_fields and v is not None:
+                setattr(cfg.git, k, v)
 
     if "codegen" in data:
         for k, v in data["codegen"].items():
@@ -459,6 +491,16 @@ SAMPLE_CONFIG = {
         "storage_dir": ".devflow_state",
         "max_retries_per_stage": 3,
         "auto_cleanup_days": 7
+    },
+    "git": {
+        "enabled": True,
+        "auto_init_if_missing": True,
+        "default_base_branch": "main",
+        "branch_naming_template": "devflow/{pipeline_id}-{slug}",
+        "commit_per_stage": True,
+        "commit_review_report": False,
+        "auto_push": False,
+        "auto_create_pr": False
     },
     "codegen": {
         "output_dir": "./generated_output",

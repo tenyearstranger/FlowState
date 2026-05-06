@@ -13,6 +13,16 @@
     "max_retries_per_stage": 3,
     "auto_cleanup_days": 7
   },
+  "git": {
+    "enabled": true,
+    "auto_init_if_missing": true,
+    "default_base_branch": "main",
+    "branch_naming_template": "devflow/{pipeline_id}-{slug}",
+    "commit_per_stage": true,
+    "commit_review_report": false,
+    "auto_push": false,
+    "auto_create_pr": false
+  },
   "codegen": {
     "output_dir": "./generated_output",
     "default_language": "python",

@@ -16,9 +16,10 @@ class ReviewAgent(BaseAgent):
     async def execute(self, input_data: AgentInput) -> AgentOutput:
         code_files = input_data.context.get("generated_code", {})
         test_report = input_data.context.get("test_report", "")
+        code_diff = input_data.context.get("code_diff", "")
         feedback = input_data.human_feedback
 
-        review, token_usage, model = await self._llm_review(code_files, test_report, feedback)
+        review, token_usage, model = await self._llm_review(code_files, test_report, code_diff, feedback)
 
         issues = review.get("issues", [])
         critical = sum(1 for i in issues if i["severity"] == "critical")
@@ -42,6 +43,7 @@ class ReviewAgent(BaseAgent):
         self,
         code_files: Dict[str, str],
         test_report: str,
+        code_diff: str,
         feedback: str | None,
     ) -> tuple[dict, dict[str, int] | None, str]:
         """调用 LLM 进行代码评审"""
@@ -50,7 +52,10 @@ class ReviewAgent(BaseAgent):
             for path, content in code_files.items()
         )
 
-        user_message = f"""请对以下代码进行全面评审。
+        user_message = f"""请基于以下代码变更内容进行全面评审。
+
+代码 diff：
+{code_diff[:12000] or "未提供 diff，请回退到文件摘要评审。"}
 
 代码文件：
 {code_summary}
